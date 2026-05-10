@@ -24,3 +24,7 @@ import trl
 import huggingface_hub
 
 print("All imports successful!")
+
+import os
+token = os.environ["HF_TOKEN"]
+print(f"HF_TOKEN: {token[:5]}...{token[-5:]}")
