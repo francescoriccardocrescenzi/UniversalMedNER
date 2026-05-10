@@ -173,10 +173,10 @@ def evaluate_dataset(
     model,
     processor,
     ds,
+    save_folder,
     batch_size=8,
     split="test",
-    max_samples=None,
-    save_folder=Path('/content/sft_gemma')
+    max_samples=None
 ):
     """Run inference on dataset and return micro F1 and number of json parsing errors encountered.
 

@@ -147,7 +147,8 @@ def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, bas
                     "You are carrying our NER (Named Entity Recognition). "
                     "You are given a text and a list of entities. "
                     "For each entity, you must find all instances in the text and output them as raw JSON only, "
-                    "with no markdown formatting or code blocks.\n"
+                    "with no markdown formatting or code blocks."
+                    "Use the format 'entity_name: ['instance 1 as string', 'instance 2 as string', ...]' for each instance.\n"
                     f"Text: {text}\n"
                     f"Entities: {shuffled_entities}\n"
                 )
@@ -156,13 +157,13 @@ def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, bas
         ],
     }
 
-def create_sft_ds(ds, max_entities, detok, hyperparam):
+def create_sft_ds(ds, max_entities, detok, random_seed):
     """Convert a whole IOB format NER dataset into an SFT format dataset.
 
     Apply `format_sft` to each sample.
     """
     entity_array, entity_weights = get_entity_array_and_weights(ds)
-    base_seed = hyperparam['RANDOM_SEED']
+    base_seed = random_seed
 
     return ds.map(
         lambda sample, idx: format_sft(

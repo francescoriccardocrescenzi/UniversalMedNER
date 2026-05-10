@@ -1,3 +1,7 @@
 data/
 .env
 __pycache__/
+.venv/
+*.egg-info/
+wandb/
+build/

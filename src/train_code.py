@@ -48,8 +48,8 @@ def execute_sft(
     model,
     processor,
     ds,
+    save_folder,
     max_samples=None,
-    save_folder=Path('/content/sft_gemma')
 ):
     """Set up and execut supervised fine tuning on the MedGemma."""
     # Prepare datasets
@@ -65,7 +65,7 @@ def execute_sft(
         task_type="CAUSAL_LM"
     )
     sft_config = trl.SFTConfig(
-        output_dir=str(save_folder / 'out'),
+        output_dir=str(save_folder / 'sft_out'),
         num_train_epochs=3,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
