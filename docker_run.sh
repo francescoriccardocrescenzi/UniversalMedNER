@@ -13,4 +13,4 @@ docker run \
     --gpus all \
     --env-file .env \
     universal-med-ner \
-    bash src/test.sh
+    bash src/train.sh
