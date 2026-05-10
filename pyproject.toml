@@ -1,0 +1,17 @@
+[project]
+name = "universal-med-ner"
+version = "0.0.0"
+
+dependencies = [
+    "torch",
+    "torchvision",
+    "transformers",
+    "datasets",
+    "trl",
+    "peft",
+    "huggingface_hub",
+    "sacremoses",
+    "numpy",
+    "pandas",
+    "scipy",
+]
