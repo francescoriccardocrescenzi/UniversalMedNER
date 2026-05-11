@@ -49,19 +49,23 @@ def execute_sft(
     processor,
     ds,
     save_folder,
-    max_samples=None,
+    learning_rate=2e-4,
+    lora_rank=16,
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+    max_train_samples=None,
+    max_validation_samples=None,
 ):
     """Set up and execut supervised fine tuning on the MedGemma."""
     # Prepare datasets
-    train_dataset = ds["train"].select(range(max_samples)) if max_samples else ds["train"]
-    eval_dataset = ds["validation"].select(range(max_samples)) if max_samples else ds["validation"]
+    train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples else ds["train"]
+    eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples else ds["validation"]
 
     # Prepare configs
     peft_config = peft.LoraConfig(
         lora_alpha=16,
         lora_dropout=0.05,
-        r=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        r=lora_rank,
+        target_modules=target_modules,
         task_type="CAUSAL_LM"
     )
     sft_config = trl.SFTConfig(
@@ -76,7 +80,7 @@ def execute_sft(
         save_strategy="no",
         eval_strategy="steps",
         eval_steps=200,
-        learning_rate=2e-4,
+        learning_rate=learning_rate,
         bf16=True,
         max_grad_norm=0.3,
         warmup_ratio=0.03,

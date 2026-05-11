@@ -1,0 +1,5 @@
+{
+  "lora_rank": [8, 16, 32],
+  "learning_rate": [1e-4, 2e-4],
+  "target_modules": ["all_linear", "attention_only"]
+}

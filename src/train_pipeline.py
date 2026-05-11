@@ -14,6 +14,18 @@ import dataset_code as dc
 import train_code as trc
 import test_code as tsc
 
+
+# Using a dict makes it easy to pass lists as arguments
+TARGET_MODULES = {
+    "attention_only": [
+        "q_proj", "k_proj", "v_proj", "o_proj"
+    ],
+    "all_linear": [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+    ]
+}
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--label", type=str, default="test")
@@ -21,6 +33,13 @@ def parse_args():
     parser.add_argument("--validation_size", type=float, default=0.02)
     parser.add_argument("--test_size", type=float, default=0.05)
     parser.add_argument("--max_entities", type=int, default=6)
+    parser.add_argument("--learning_rate", type=float, default=2e-4)
+    parser.add_argument("--lora_rank", type=int, default=16)
+    parser.add_argument("--target_modules", type=str, default="all_linear")
+    parser.add_argument("--max_train_samples", type=int, default=None)
+    parser.add_argument("--max_validation_samples", type=int, default=None)
+    parser.add_argument("--max_test_samples", type=int, default=None)
+    parser.add_argument("--verbose", action="store_true", default=False)
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -53,8 +72,9 @@ if __name__ == "__main__":
     )
     print(' **** Model loaded on device ****')
     print(next(gemma.parameters()).device)
-    print(' **** Test pretrained model on a single batch before fine-tuning:')
-    tsc.test_model_on_batch(gemma, gemma_processor, pile_ds, indices=list(range(8)))
+    if args.verbose:
+        print(' **** Test pretrained model on a single batch before fine-tuning:')
+        tsc.test_model_on_batch(gemma, gemma_processor, pile_ds, indices=list(range(8)))
 
     # --- FINE-TUNE MODEL ---
     print(' **** Starting fine-tuning... ****')
@@ -63,13 +83,18 @@ if __name__ == "__main__":
         gemma_processor, 
         pile_ds, 
         save_folder=Path(f'data/{args.label}'), 
-        max_samples=500
+        learning_rate=args.learning_rate,
+        lora_rank=args.lora_rank,
+        target_modules=TARGET_MODULES[args.target_modules],
+        max_train_samples=args.max_train_samples,
+        max_validation_samples=args.max_validation_samples,
     )
 
     # --- TEST MODEL ---
     # Test fine-tuned model on a single batch
-    print(" **** Test fine-tuned model on a single batch ****")
-    tsc.test_model_on_batch(gemma, gemma_processor, pile_ds, indices=list(range(8)))
+    if args.verbose:
+        print(" **** Test fine-tuned model on a single batch ****")
+        tsc.test_model_on_batch(gemma, gemma_processor, pile_ds, indices=list(range(8)))
     # Test on whole test set
     print(" **** Compute dataset metrics ****")
     metric_dict = tsc.evaluate_dataset(
@@ -78,7 +103,7 @@ if __name__ == "__main__":
         pile_ds, 
         batch_size=8, 
         split="test", 
-        max_samples=100, 
+        max_samples=args.max_test_samples, 
         save_folder=Path(f'data/{args.label}')
     )
     print(metric_dict)

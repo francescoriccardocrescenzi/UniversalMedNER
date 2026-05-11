@@ -1,4 +1,6 @@
-data/
+data/*
+!data/grid_search
+!data/grid_search/*
 .env
 __pycache__/
 .venv/

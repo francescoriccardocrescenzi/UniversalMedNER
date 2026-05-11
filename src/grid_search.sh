@@ -1,0 +1,1 @@
+python3 src/grid_search_pipeline.py "$@"
