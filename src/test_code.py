@@ -209,6 +209,14 @@ def evaluate_dataset(
         gt_jsons = [row["messages"][-1]["content"] for row in batch_rows]
         # Compute predictions
         preds = run_batched_inference(model, processor, prompts)
+        # Remove fences added by pretrained model
+        preds = [
+            s.strip()
+            .removeprefix("```json").removeprefix("```")
+            .removesuffix("```")
+            .strip()
+            for s in preds
+        ]
         # Compute and accumulate counts
         for gt_json, pred in zip(gt_jsons, preds):
             tp, gt_c, pred_c, err = compute_sample_counts(gt_json, pred)

@@ -41,6 +41,9 @@ def main():
 
     best_f1 = -1
     best_result = None
+    best_metrics = None
+    best_params = None
+
     combos = list(generate_combinations(grid))
     
     print(f"========= STARTING GRID SEARCH... =========")
@@ -54,25 +57,46 @@ def main():
             run_training(run_dir, label, params)
             with open(run_dir / 'metrics.json', 'r') as f:
                 metrics = json.load(f)
+
             f1 = metrics["F1"]
+
+            params_clean = dict(params)
+            params_clean["max_train_samples"] = None
+            params_clean["max_validation_samples"] = None
+            params_clean["max_test_samples"] = None
+
             result = {
                 "label": label,
-                "params": params,
+                "params": params_clean,
                 "metrics": metrics,
                 "F1": f1,
             }
+
             if f1 > best_f1:
                 best_f1 = f1
                 best_result = result
+                best_metrics = metrics
+                best_params = params_clean
+
             print(f"========= GRID SEARCH - RUN ENDED WITH F1={f1}, BEST={best_f1} ========= ")
+
         except subprocess.CalledProcessError:
             print(f"========= GRID SEARCH - RUN FAILED FOR {label} ========= ")
+
         finally:
             shutil.rmtree(run_dir)
-    
+
     with open(grid_search_dir / 'best.json', 'w') as f:
         json.dump(best_result, f, indent=4)
-    print("========= GRID SEARCH - BEST RESULTS:", best_result)
+
+    with open(grid_search_dir / 'best_metrics.json', 'w') as f:
+        json.dump(best_metrics, f, indent=4)
+
+    with open(grid_search_dir / 'best_params.json', 'w') as f:
+        json.dump(best_params, f, indent=4)
+
+    print("========= GRID SEARCH - BEST F1:", best_f1)
+    print("========= GRID SEARCH COMPLETED =========")
 
 
 if __name__ == "__main__":

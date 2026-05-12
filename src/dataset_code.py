@@ -140,21 +140,41 @@ def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, bas
 
     return {
         "messages": [
-            {"role": "system", "content": "SYSTEM INSTRUCTION: think silently if needed."},
+            {
+                "role": "system",
+                "content": (
+                    "You are a Named Entity Recognition system.\n\n"
+                    "Objective:\n"
+                    "Extract only exact text spans from the provided input text that match each given entity label.\n\n"
+                    "Strict rules:\n"
+                    "- Only extract substrings that appear verbatim in the text.\n"
+                    "- Do NOT infer, generalize, or paraphrase.\n"
+                    "- Do NOT use semantic matching or external knowledge.\n"
+                    "- If no exact match exists for an entity, return an empty list.\n"
+                    "- Do NOT hallucinate entities not explicitly present in the text.\n"
+                    "- Matching is case-sensitive and character-exact.\n"
+                    "- Output MUST be valid JSON only (no markdown, no explanations)."
+                )
+            },
             {
                 "role": "user",
                 "content": (
-                    "You are carrying our NER (Named Entity Recognition). "
-                    "You are given a text and a list of entities. "
-                    "For each entity, you must find all instances in the text and output them as raw JSON only, "
-                    "with no markdown formatting or code blocks."
-                    "Use the format 'entity_name: ['instance 1 as string', 'instance 2 as string', ...]' for each instance.\n"
-                    f"Text: {text}\n"
-                    f"Entities: {shuffled_entities}\n"
+                    "Text:\n"
+                    f"{text}\n\n"
+                    "Entity labels:\n"
+                    f"{shuffled_entities}\n\n"
+                    "Return a JSON object where:\n"
+                    "- keys are entity labels\n"
+                    "- values are lists of exact substrings taken directly from the text\n"
+                    "- only exact matches are allowed\n"
+                    "- if no match exists for a label, return []"
                 )
             },
-            {"role": "assistant", "content": ner_json}
-        ],
+            {
+                "role": "assistant", 
+                "content": ner_json
+            }
+        ]
     }
 
 def create_sft_ds(ds, max_entities, detok, random_seed):
