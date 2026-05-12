@@ -16,10 +16,13 @@ def make_label(params):
     suffix = "_".join([f"{k}{v}" for k, v in params.items()])
     return f"grid_search_{suffix}"
 
-def run_training(label, params):
+def run_training(run_dir, label, params):
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(run_dir / "hyperparam.json", "w") as f:
+        json.dump(params, f, indent=4)
+
     cmd = ["bash", "src/train.sh", "--label", label]
-    for k, v in params.items():
-        cmd += [f"--{k}", str(v)]
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
@@ -48,7 +51,7 @@ def main():
         run_dir = run_root / label
 
         try:
-            run_training(label, params)
+            run_training(run_dir, label, params)
             with open(run_dir / 'metrics.json', 'r') as f:
                 metrics = json.load(f)
             f1 = metrics["F1"]
@@ -68,7 +71,7 @@ def main():
             shutil.rmtree(run_dir)
     
     with open(grid_search_dir / 'best.json', 'w') as f:
-        json.dump(best_result, f)
+        json.dump(best_result, f, indent=4)
     print("========= GRID SEARCH - BEST RESULTS:", best_result)
 
 

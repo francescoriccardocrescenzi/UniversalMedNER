@@ -4,5 +4,9 @@
     "target_modules": ["all_linear", "attention_only"],
     "max_train_samples": [500],
     "max_validation_samples": [100],
-    "max_test_samples": [200]
+    "max_test_samples": [200],
+    "random_seed": [42],
+    "validation_size": [0.02],
+    "test_size": [0.05],
+    "max_entities": [6]
 }
