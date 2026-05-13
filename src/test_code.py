@@ -77,6 +77,9 @@ def compute_sample_counts(gt_json, pred_json):
         pred = json.loads(pred_json)
         gt = json.loads(gt_json)
 
+        if not isinstance(pred, dict) or not isinstance(gt, dict):
+            raise ValueError("Loaded JSON must be a dict")
+
         TP_total = 0
         GT_total = 0
         PRED_total = 0
@@ -94,7 +97,7 @@ def compute_sample_counts(gt_json, pred_json):
             PRED_total += pred_n
 
         return TP_total, GT_total, PRED_total, 0
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         return 0, 0, 0, 1
     
 

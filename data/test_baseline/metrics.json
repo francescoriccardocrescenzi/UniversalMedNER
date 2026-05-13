@@ -1,1 +1,1 @@
-{"TP_total": 7.666666666666667, "GT_total": 22, "PRED_total": 13, "F1": 0.4380952380952381, "json_errors_total": 0}
+{"TP_total": 3170.9059880549967, "GT_total": 6948, "PRED_total": 6220, "F1": 0.4816078353667978, "json_errors_total": 107}

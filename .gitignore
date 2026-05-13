@@ -1,6 +1,9 @@
 data/*
+!data/hyperparam_template.json
 !data/grid_search
 !data/grid_search/*
+!data/test_baseline
+!data/test_baseline/*
 .env
 __pycache__/
 .venv/

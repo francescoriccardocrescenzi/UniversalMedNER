@@ -71,9 +71,9 @@ def execute_sft(
     sft_config = trl.SFTConfig(
         output_dir=str(save_folder / 'sft_out'),
         num_train_epochs=3,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
+        gradient_accumulation_steps=16,
         gradient_checkpointing=True,
         optim="adamw_torch_fused",
         logging_steps=50,
