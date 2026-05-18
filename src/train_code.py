@@ -1,9 +1,14 @@
 # --- IMPORTS ---
 
 from pathlib import Path
+import torch
+import transformers
 import peft
 import trl
 
+# HF LABELS
+HF_USERNAME = "frc00"
+HF_MODEL_NAME = "UniversalMedNER"
 
 # MODEL FINE TUNE CODE
 
@@ -66,30 +71,47 @@ def execute_sft(
         lora_dropout=0.05,
         r=lora_rank,
         target_modules=target_modules,
-        task_type="CAUSAL_LM"
+        task_type="CAUSAL_LM",
     )
     sft_config = trl.SFTConfig(
         output_dir=str(save_folder / 'sft_out'),
+        
+        # --- HUGGING FACE ---
+        push_to_hub=True,
+        hub_model_id=f"{HF_USERNAME}/{HF_MODEL_NAME}",
+        hub_strategy="all_checkpoints",
+        
+        # --- CHECKPOINTING ---
+        save_strategy="steps",
+        save_steps=200,
+        save_total_limit=3,
+
+        # --- EVAL / BEST MODEL ---
+        eval_strategy="steps",
+        eval_steps=200,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+
+        # --- TRAINING ---
         num_train_epochs=3,
-        per_device_train_batch_size=1,
-        per_device_eval_batch_size=1,
-        gradient_accumulation_steps=16,
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=4,
+        gradient_accumulation_steps=4,
         gradient_checkpointing=True,
         optim="adamw_torch_fused",
         logging_steps=50,
-        save_strategy="no",
-        eval_strategy="steps",
-        eval_steps=200,
-        learning_rate=learning_rate,
+        learning_rate=2e-4,
         bf16=True,
         max_grad_norm=0.3,
         warmup_ratio=0.03,
         lr_scheduler_type="linear",
+
         gradient_checkpointing_kwargs={"use_reentrant": False},
         dataset_kwargs={"skip_prepare_dataset": True},
-        remove_unused_columns = False,
+        remove_unused_columns=False,
         label_names=["labels"],
-        report_to="none"
+        report_to="wandb",
     )
 
     # Initialize trainer
@@ -107,5 +129,16 @@ def execute_sft(
     sft_trainer.train()
 
     # Save results
-    model.save_pretrained(save_folder / "model")
+    sft_trainer.save_model(save_folder / "final_model")
+    sft_trainer.push_to_hub(commit_message="final model")
+    processor.push_to_hub(f"{HF_USERNAME}/{HF_MODEL_NAME}")
     processor.save_pretrained(save_folder / "processor")
+
+    # Return best model
+    best_ckpt = sft_trainer.state.best_model_checkpoint
+    best_model = transformers.AutoModelForImageTextToText.from_pretrained(
+        best_ckpt,
+        device_map="cuda:0",
+        torch_dtype=torch.bfloat16
+    )
+    return best_model

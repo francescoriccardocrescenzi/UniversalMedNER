@@ -1,0 +1,13 @@
+torch>=2.7
+torchvision
+torchaudio
+transformers
+datasets
+trl
+peft
+huggingface_hub
+sacremoses
+numpy
+pandas
+scipy
+wandb

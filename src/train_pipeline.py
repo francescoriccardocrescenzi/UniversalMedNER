@@ -74,7 +74,7 @@ if __name__ == "__main__":
 
     # --- FINE-TUNE MODEL ---
     print(' **** Starting fine-tuning... ****')
-    trc.execute_sft(
+    best_gemma = trc.execute_sft(
         gemma, 
         gemma_processor, 
         pile_ds, 
@@ -86,15 +86,15 @@ if __name__ == "__main__":
         max_validation_samples=hyperparam.max_validation_samples,
     )
 
-    # --- TEST MODEL ---
+    # --- TEST BEST MODEL ---
     # Test fine-tuned model on a single batch
     if args.verbose:
-        print(" **** Test fine-tuned model on a single batch ****")
-        tsc.test_model_on_batch(gemma, gemma_processor, pile_ds, indices=list(range(8)))
+        print(" **** Test best checkpoint of fine-tuned model on a single batch ****")
+        tsc.test_model_on_batch(best_gemma, gemma_processor, pile_ds, indices=list(range(8)))
     # Test on whole test set
     print(" **** Compute dataset metrics ****")
     metric_dict = tsc.evaluate_dataset(
-        gemma, 
+        best_gemma, 
         gemma_processor, 
         pile_ds, 
         batch_size=8, 
