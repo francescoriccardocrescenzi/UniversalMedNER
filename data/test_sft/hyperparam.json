@@ -1,0 +1,12 @@
+{
+    "lora_rank": 16,
+    "learning_rate": 0.0003,
+    "target_modules": "all_linear",
+    "max_train_samples": null,
+    "max_validation_samples": null,
+    "max_test_samples": null,
+    "random_seed": 42,
+    "validation_size": 0.02,
+    "test_size": 0.05,
+    "max_entities": 6
+}

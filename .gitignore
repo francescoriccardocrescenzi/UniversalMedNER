@@ -4,6 +4,8 @@ data/*
 !data/grid_search/*
 !data/test_baseline
 !data/test_baseline/*
+!data/test_sft
+!data/test_sft/*
 .env
 __pycache__/
 .venv/
