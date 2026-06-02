@@ -43,6 +43,7 @@ set -a; source .env; set +a
 source .venv/bin/activate
 
 RUN_FOLDER="data/$LABEL"
+CHECKPOINT_FOLDER_SFT="${LABEL}_sft"
 
 if run_step 1; then
   echo "[STEP 1] TEST BASELINE MODEL"
@@ -54,16 +55,18 @@ fi
 
 if run_step 2; then
   echo "[STEP 2] SFT TRAINING"
-  python src/sft_pipeline.py \
+  python src/train_pipeline.py \
     --label "$LABEL" \
     --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
-    --save_folder "$RUN_FOLDER/sft_out"
+    --save_folder "$RUN_FOLDER/sft_out" \
+    --checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
+    --mode "sft"
 fi
 
 if run_step 3; then
   echo "[STEP 3] TEST SFT MODEL"
   python src/test_pipeline.py \
-    --label "$LABEL" \
+    --checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
     --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
     --metrics_path "$RUN_FOLDER/sft_metrics.json" \
     --verbose

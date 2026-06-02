@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument("--dataset_repo", type=str, default="disi-unibo-nlp/Pile-NER-biomed-IOB")
     parser.add_argument("--model_repo", type=str, default="google/medgemma-1.5-4b-it")
     parser.add_argument("--checkpoint_repo", type=str, default="frc00/UniversalMedNER")
-    parser.add_argument('--label', type=str, default=None)
+    parser.add_argument('--checkpoint_folder', type=str, default=None)
     parser.add_argument("--verbose", action="store_true", default=False)
     return parser.parse_args()
 
@@ -29,7 +29,8 @@ if __name__ == "__main__":
     print('[INFO] Initializing run...')
     args = parse_args()
     with open(args.hyperparam_path, 'r') as f:
-        hyperparam = types.SimpleNamespace(**json.load(f))
+        hyperparam_raw = json.load(f)
+    hyperparam = types.SimpleNamespace(**{**hyperparam_raw["shared"], **hyperparam_raw["test"]})
     np.random.seed(hyperparam.random_seed)
     print('[OK] Hyperparameters loaded:')
     print(hyperparam)
@@ -56,12 +57,12 @@ if __name__ == "__main__":
         device_map="cuda:0",
         torch_dtype=torch.bfloat16
     )
-    if args.label is not None:
+    if args.checkpoint_folder is not None:
         local_adapter_dir = huggingface_hub.snapshot_download(
             repo_id=args.checkpoint_repo,
-            allow_patterns=f"{args.label}/*"
+            allow_patterns=f"{args.checkpoint_folder}/*"
         )
-        local_adapter_dir = Path(local_adapter_dir) / args.label
+        local_adapter_dir = Path(local_adapter_dir) / args.checkpoint_folder
         model = peft.PeftModel.from_pretrained(
             base_model,
             local_adapter_dir

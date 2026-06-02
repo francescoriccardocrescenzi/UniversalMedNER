@@ -121,4 +121,79 @@ def execute_sft(
 
     # Train
     sft_trainer.train()
-    return sft_trainer 
+    return sft_trainer
+ 
+def execute_grpo(
+    model_repo,
+    processor,
+    ds,
+    save_folder,
+    learning_rate=5e-6,
+    lora_rank=64,
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+    max_train_samples=None,
+    max_validation_samples=None,
+    batch_size=3,
+    gradient_accumulation_steps=4,
+    num_generations=4,
+    max_completion_length=1024,
+    num_epochs=3,
+):
+    # Prepare datasets
+    train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples else ds["train"]
+    eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples else ds["validation"]
+
+    # Prepare configs
+    peft_config = peft.LoraConfig(
+        r=lora_rank,
+        lora_alpha=lora_rank,
+        target_modules=target_modules,
+        task_type="CAUSAL_LM",
+    )
+
+    grpo_config = trl.GRPOConfig(
+        output_dir=str(save_folder),
+        # --- HUGGING FACE ---
+        push_to_hub=False,
+        # --- CHECKPOINTING ---
+        save_strategy="steps",
+        save_steps=100,
+        save_total_limit=2,
+        # --- EVAL / BEST MODEL ---
+        eval_strategy="steps",
+        eval_steps=100,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        # --- TRAINING ---
+        num_train_epochs=num_epochs,
+        per_device_train_batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        num_generations=num_generations,
+        max_completion_length=max_completion_length,
+        gradient_checkpointing=True,
+        logging_steps=20,
+        learning_rate=learning_rate,
+        bf16=True,
+        max_grad_norm=0.3,
+        warmup_ratio=0.03,
+        lr_scheduler_type="linear",
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        model_init_kwargs={"device_map": "auto", "dtype": "bfloat16", "attn_implementation": "eager"},
+        report_to="wandb",
+    )
+
+    # Initialize trainer
+    grpo_trainer = trl.GRPOTrainer(
+        model=model_repo,
+        reward_funcs=[rc.reward_fn],
+        args=grpo_config,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        peft_config=peft_config,
+        processing_class=processor,
+    )
+
+    # Train
+    grpo_trainer.train()
+    return grpo_trainer

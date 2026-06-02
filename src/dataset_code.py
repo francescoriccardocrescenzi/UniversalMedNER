@@ -198,3 +198,13 @@ def create_sft_ds(ds, max_entities, detok, random_seed):
         with_indices=True,
         remove_columns=["tokens", "ner_tags"]
     )
+
+def create_grpo_ds(ds, max_entities, detok, random_seed):
+    sft_ds = create_sft_ds(ds, max_entities, detok, random_seed)
+    return sft_ds.map(
+        lambda sample: {
+            "prompt": sample["messages"][:-1],
+            "answer": sample["messages"][-1]["content"]
+        },
+        remove_columns=["messages"]
+    )
