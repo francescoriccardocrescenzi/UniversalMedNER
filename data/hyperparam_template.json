@@ -8,5 +8,8 @@
     "target_modules": "all_linear",
     "max_train_samples": 500,
     "max_validation_samples": 100,
-    "max_test_samples": 200
+    "max_test_samples": 200,
+    "batch_size": 16,
+    "gradient_accumulation_steps": 4,
+    "num_epochs": 3
 }

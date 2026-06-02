@@ -176,7 +176,6 @@ def evaluate_dataset(
     model,
     processor,
     ds,
-    save_folder,
     batch_size=8,
     split="test",
     max_samples=None
@@ -239,10 +238,5 @@ def evaluate_dataset(
         'F1': float(f1),
         'json_errors_total': int(json_errors_total)
     }
-
-    # Save to disk
-    json_path = save_folder / 'metrics.json'
-    with open(json_path, "w") as f:
-        json.dump(metric_dict, f)
 
     return metric_dict

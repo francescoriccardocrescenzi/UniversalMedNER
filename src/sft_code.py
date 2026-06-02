@@ -1,14 +1,7 @@
 # --- IMPORTS ---
 
-from pathlib import Path
-import torch
-import transformers
 import peft
 import trl
-
-# HF LABELS
-HF_USERNAME = "frc00"
-HF_MODEL_NAME = "UniversalMedNER"
 
 # MODEL FINE TUNE CODE
 
@@ -59,6 +52,9 @@ def execute_sft(
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
     max_train_samples=None,
     max_validation_samples=None,
+    batch_size=4,
+    gradient_accumulation_steps=4,
+    num_epochs=3
 ):
     """Set up and execut supervised fine tuning on the MedGemma."""
     # Prepare datasets
@@ -74,17 +70,15 @@ def execute_sft(
         task_type="CAUSAL_LM",
     )
     sft_config = trl.SFTConfig(
-        output_dir=str(save_folder / 'sft_out'),
+        output_dir=str(save_folder),
         
         # --- HUGGING FACE ---
-        push_to_hub=True,
-        hub_model_id=f"{HF_USERNAME}/{HF_MODEL_NAME}",
-        hub_strategy="all_checkpoints",
+        push_to_hub=False,
         
         # --- CHECKPOINTING ---
         save_strategy="steps",
         save_steps=200,
-        save_total_limit=3,
+        save_total_limit=2,
 
         # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
@@ -94,14 +88,14 @@ def execute_sft(
         greater_is_better=False,
 
         # --- TRAINING ---
-        num_train_epochs=3,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
-        gradient_accumulation_steps=4,
+        num_train_epochs=num_epochs,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         gradient_checkpointing=True,
         optim="adamw_torch_fused",
         logging_steps=50,
-        learning_rate=2e-4,
+        learning_rate=learning_rate,
         bf16=True,
         max_grad_norm=0.3,
         warmup_ratio=0.03,
@@ -127,18 +121,4 @@ def execute_sft(
 
     # Train
     sft_trainer.train()
-
-    # Save results
-    sft_trainer.save_model(save_folder / "final_model")
-    sft_trainer.push_to_hub(commit_message="final model")
-    processor.push_to_hub(f"{HF_USERNAME}/{HF_MODEL_NAME}")
-    processor.save_pretrained(save_folder / "processor")
-
-    # Return best model
-    best_ckpt = sft_trainer.state.best_model_checkpoint
-    best_model = transformers.AutoModelForImageTextToText.from_pretrained(
-        best_ckpt,
-        device_map="cuda:0",
-        torch_dtype=torch.bfloat16
-    )
-    return best_model
+    return sft_trainer 

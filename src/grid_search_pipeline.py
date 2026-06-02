@@ -19,6 +19,7 @@ def make_label(params):
 def run_training(run_dir, label, params):
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    
     with open(run_dir / "hyperparam.json", "w") as f:
         json.dump(params, f, indent=4)
 
