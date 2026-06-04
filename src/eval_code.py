@@ -240,3 +240,23 @@ def evaluate_dataset(
     }
 
     return metric_dict
+
+
+# --- GRPO REWARD ---
+
+# --- GRPO REWARD ---
+
+def compute_sample_f1(gt_json, pred_json):
+    """Compute micro F1 for a single sample."""
+    TP, GT, PRED, json_error = compute_sample_counts(gt_json, pred_json)
+
+    if json_error or GT + PRED == 0:
+        return 0.0
+    else:
+        return 2 * TP / (GT + PRED)
+
+def grpo_reward_fn(prompts, completions, answer, **kwargs):
+    return [
+        compute_sample_f1(gt_json, completion[0]["content"])
+        for completion, gt_json in zip(completions, answer)
+    ]

@@ -44,6 +44,7 @@ source .venv/bin/activate
 
 RUN_FOLDER="data/$LABEL"
 CHECKPOINT_FOLDER_SFT="${LABEL}_sft"
+CHECKPOINT_FOLDER_GRPO="${LABEL}_grpo"
 
 if run_step 1; then
   echo "[STEP 1] TEST BASELINE MODEL"
@@ -59,7 +60,7 @@ if run_step 2; then
     --label "$LABEL" \
     --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
     --save_folder "$RUN_FOLDER/sft_out" \
-    --checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
+    --checkpoint_save_folder "$CHECKPOINT_FOLDER_SFT" \
     --mode "sft"
 fi
 
@@ -74,12 +75,22 @@ fi
 
 if run_step 4; then
   echo "[STEP 4] GRPO TRAINING"
-  python step4_push.py --label "$LABEL"
+  python src/train_pipeline.py \
+    --label "$LABEL" \
+    --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
+    --save_folder "$RUN_FOLDER/grpo_out" \
+    --checkpoint_load_folder "$CHECKPOINT_FOLDER_SFT" \
+    --checkpoint_save_folder "$CHECKPOINT_FOLDER_GRPO" \
+    --mode "grpo"
 fi
 
 if run_step 5; then
   echo "[STEP 5] TEST GRPO MODEL"
-  python step5_eval.py --label "$LABEL"
+  python src/test_pipeline.py \
+    --checkpoint_folder "$CHECKPOINT_FOLDER_GRPO" \
+    --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
+    --metrics_path "$RUN_FOLDER/grpo_metrics.json" \
+    --verbose
 fi
 
 echo "[DONE]"

@@ -3,6 +3,8 @@
 import peft
 import trl
 
+import eval_code as ec
+
 # MODEL FINE TUNE CODE
 
 def collate_fn(samples, processor):
@@ -124,7 +126,7 @@ def execute_sft(
     return sft_trainer
  
 def execute_grpo(
-    model_repo,
+    model,
     processor,
     ds,
     save_folder,
@@ -153,40 +155,41 @@ def execute_grpo(
 
     grpo_config = trl.GRPOConfig(
         output_dir=str(save_folder),
+        
         # --- HUGGING FACE ---
         push_to_hub=False,
+        
         # --- CHECKPOINTING ---
         save_strategy="steps",
         save_steps=100,
         save_total_limit=2,
+        
         # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
         eval_steps=100,
+        logging_steps=25,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
+        
         # --- TRAINING ---
         num_train_epochs=num_epochs,
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         num_generations=num_generations,
         max_completion_length=max_completion_length,
-        gradient_checkpointing=True,
-        logging_steps=20,
         learning_rate=learning_rate,
         bf16=True,
-        max_grad_norm=0.3,
-        warmup_ratio=0.03,
-        lr_scheduler_type="linear",
+
+        gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        model_init_kwargs={"device_map": "auto", "dtype": "bfloat16", "attn_implementation": "eager"},
         report_to="wandb",
     )
 
     # Initialize trainer
     grpo_trainer = trl.GRPOTrainer(
-        model=model_repo,
-        reward_funcs=[rc.reward_fn],
+        model=model,
+        reward_funcs=[ec.grpo_reward_fn],
         args=grpo_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,

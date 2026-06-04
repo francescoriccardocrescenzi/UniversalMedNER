@@ -32,7 +32,8 @@ def parse_args():
     parser.add_argument("--dataset_repo", type=str, default="disi-unibo-nlp/Pile-NER-biomed-IOB")
     parser.add_argument("--model_repo", type=str, default="google/medgemma-1.5-4b-it")
     parser.add_argument("--checkpoint_repo", type=str, default="frc00/UniversalMedNER")
-    parser.add_argument("--checkpoint_folder", type=str)
+    parser.add_argument("--checkpoint_save_folder", type=str)
+    parser.add_argument("--checkpoint_load_folder", type=str, default=None)
     parser.add_argument("--label", type=str)
     parser.add_argument("--mode", type=str, choices=["sft", "grpo"], default="sft")
     return parser.parse_args()
@@ -52,7 +53,6 @@ if __name__ == "__main__":
 
     print("[INFO] Preparing dataset...")
     detok = sacremoses.MosesDetokenizer(lang="en")
-
     create_ds_fn = dc.create_sft_ds if args.mode == "sft" else dc.create_grpo_ds
     pile_ds = create_ds_fn(
         ds=datasets.load_dataset(args.dataset_repo),
@@ -64,16 +64,35 @@ if __name__ == "__main__":
     print("[OK] Dataset prepared:")
     print(pile_ds)
 
-    print("[INFO] Starting training...")
+    print("[INFO] Loading model...")
     processor = transformers.AutoProcessor.from_pretrained(args.model_repo, backend="pil")
-
     if args.mode == "sft":
         model = transformers.AutoModelForImageTextToText.from_pretrained(
             args.model_repo,
             device_map="cuda:0",
-            dtype=torch.bfloat16,
+            torch_dtype=torch.bfloat16,
         )
-        print("[OK] Model loaded on device:", next(model.parameters()).device)
+    else:
+        base_model = transformers.AutoModelForImageTextToText.from_pretrained(
+            args.model_repo,
+            device_map="cuda:0",
+            torch_dtype=torch.bfloat16,
+        )
+        local_adapter_dir = huggingface_hub.snapshot_download(
+            repo_id=args.checkpoint_repo,
+            allow_patterns=f"{args.checkpoint_load_folder}/*"
+        )
+        local_adapter_dir = Path(local_adapter_dir) / args.checkpoint_load_folder
+        model = peft.PeftModel.from_pretrained(
+            base_model,
+            local_adapter_dir
+        )
+        model = model.merge_and_unload()
+    model.eval()
+    print('[OK] Model loaded on device:', next(model.parameters()).device)
+
+    print("[INFO] Starting training...")
+    if args.mode == "sft":
         trainer = trc.execute_sft(
             model,
             processor,
@@ -90,7 +109,7 @@ if __name__ == "__main__":
         )
     else:
         trainer = trc.execute_grpo(
-            args.model_repo,
+            model,
             processor,
             pile_ds,
             save_folder=args.save_folder,
@@ -121,7 +140,7 @@ if __name__ == "__main__":
     api.upload_folder(
         repo_id=args.checkpoint_repo,
         folder_path=tmp_dir,
-        path_in_repo=args.checkpoint_folder,
+        path_in_repo=args.checkpoint_save_folder,
     )
     shutil.rmtree(tmp_dir)
-    print("[OK] Best checkpoint pushed to:", f"{args.checkpoint_repo}/{args.checkpoint_folder}")
+    print("[OK] Best checkpoint pushed to:", f"{args.checkpoint_repo}/{args.checkpoint_save_folder}")
