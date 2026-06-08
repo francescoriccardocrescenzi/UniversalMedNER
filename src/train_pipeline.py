@@ -47,7 +47,8 @@ if __name__ == "__main__":
         hyperparam_raw = json.load(f)
     hyperparam = types.SimpleNamespace(**{**hyperparam_raw["shared"], **hyperparam_raw[args.mode]})
     np.random.seed(hyperparam.random_seed)
-    wandb.init(project="UniversalMedNER", name=args.label)
+    wandb_name = f"{args.label}_{args.mode}"
+    wandb.init(project="UniversalMedNER", name=wandb_name)
     print("[OK] Hyperparameters loaded:")
     print(hyperparam)
 
@@ -90,6 +91,8 @@ if __name__ == "__main__":
         model = model.merge_and_unload()
     model.eval()
     print('[OK] Model loaded on device:', next(model.parameters()).device)
+    print(f"[INFO] Tokenizer EOS: {processor.tokenizer.eos_token_id}")
+    print(f"[INFO] Generation config EOS: {model.generation_config.eos_token_id}")
 
     print("[INFO] Starting training...")
     if args.mode == "sft":

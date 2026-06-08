@@ -1,5 +1,6 @@
 # --- IMPORTS ---
 
+import torch
 import peft
 import trl
 
@@ -166,11 +167,11 @@ def execute_grpo(
         
         # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
-        eval_steps=100,
-        logging_steps=25,
+        eval_steps=50,
+        logging_steps=10,
         load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
+        metric_for_best_model="eval_reward",
+        greater_is_better=True,
         
         # --- TRAINING ---
         num_train_epochs=num_epochs,
@@ -184,6 +185,10 @@ def execute_grpo(
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         report_to="wandb",
+
+        beta=0.4,
+        temperature=1.0,
+        generation_kwargs={"eos_token_id": [1, 106]},
     )
 
     # Initialize trainer
@@ -196,7 +201,11 @@ def execute_grpo(
         peft_config=peft_config,
         processing_class=processor,
     )
+    print("per_device_train_batch_size =", grpo_trainer.args.per_device_train_batch_size)
+    print("gradient_accumulation_steps =", grpo_trainer.args.gradient_accumulation_steps)
+    print("num_generations =", grpo_trainer.args.num_generations)
 
+    print("train dataloader batch size =", grpo_trainer.get_train_dataloader().batch_size)
     # Train
     grpo_trainer.train()
     return grpo_trainer

@@ -4,29 +4,30 @@
         "validation_size": 0.02,
         "test_size": 0.05,
         "max_entities": 6,
-        "target_modules": "all_linear",
-        "max_train_samples": 500,
-        "max_validation_samples": 100,
-        "max_test_samples": 200
+        "target_modules": "all_linear"
     },
     "sft": {
         "learning_rate": 0.0002,
         "lora_rank": 16,
         "batch_size": 16,
         "gradient_accumulation_steps": 4,
-        "num_epochs": 3
+        "num_epochs": 3,
+        "max_train_samples": null,
+        "max_validation_samples": null
     },
     "grpo": {
-        "learning_rate": 0.000005,
-        "lora_rank": 64,
-        "batch_size": 3,
-        "gradient_accumulation_steps": 4,
+        "learning_rate": 5e-6,
+        "lora_rank": 16,
+        "batch_size": 8,
+        "gradient_accumulation_steps": 8,
         "num_generations": 4,
-        "max_completion_length": 1024,
-        "num_epochs": 3
+        "max_completion_length": 600,
+        "num_epochs": 1,
+        "max_train_samples": 1000,
+        "max_validation_samples": 100
     },
     "test": {
-        "max_test_samples": 200,
+        "max_test_samples": null,
         "batch_size": 16
     }
 }

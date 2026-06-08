@@ -103,6 +103,13 @@ def compute_sample_counts(gt_json, pred_json):
 
 # --- INFERENCE AND EVALUATION ---
 
+def clean_prediction(s):
+    """Strip markdown code fences from a model prediction."""
+    s = s.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    s = s.split("<start_of_turn>model\n", 1)[-1]
+    s = s.split("<end_of_turn>", 1)[0]
+    return s
+
 def run_batched_inference(model, processor, prompts, max_new_tokens=200):
     """Run model inference on a batch of samples."""
 
@@ -141,9 +148,7 @@ def run_batched_inference(model, processor, prompts, max_new_tokens=200):
 
     # Cleanup generated text
     for text in decoded:
-        text = text.split("<start_of_turn>model\n", 1)[-1]
-        text = text.split("<end_of_turn>", 1)[0]
-        responses.append(text.strip())
+        responses.append(clean_prediction(text))
 
     # cleanup
     del inputs
@@ -212,13 +217,7 @@ def evaluate_dataset(
         # Compute predictions
         preds = run_batched_inference(model, processor, prompts)
         # Remove fences added by pretrained model
-        preds = [
-            s.strip()
-            .removeprefix("```json").removeprefix("```")
-            .removesuffix("```")
-            .strip()
-            for s in preds
-        ]
+        preds = [clean_prediction(p) for p in preds]
         # Compute and accumulate counts
         for gt_json, pred in zip(gt_jsons, preds):
             tp, gt_c, pred_c, err = compute_sample_counts(gt_json, pred)
@@ -244,8 +243,6 @@ def evaluate_dataset(
 
 # --- GRPO REWARD ---
 
-# --- GRPO REWARD ---
-
 def compute_sample_f1(gt_json, pred_json):
     """Compute micro F1 for a single sample."""
     TP, GT, PRED, json_error = compute_sample_counts(gt_json, pred_json)
@@ -255,8 +252,84 @@ def compute_sample_f1(gt_json, pred_json):
     else:
         return 2 * TP / (GT + PRED)
 
+def inspect_grpo_rewards(prompts, completions, answer):
+    import json
+    import numpy as np
+    from collections import defaultdict
+
+    rewards = []
+    group_rewards = defaultdict(list)
+
+    for prompt, completion, gt_json in zip(prompts, completions, answer):
+        pred = clean_prediction(completion[0]["content"])
+        r = float(compute_sample_f1(gt_json, pred))
+
+        rewards.append(r)
+        key = json.dumps(prompt, sort_keys=True)
+        group_rewards[key].append(r)
+
+    rewards = np.array(rewards, dtype=np.float32)
+
+    print("\nREWARD DIAGNOSTICS")
+    print(f"global_mean = {rewards.mean():.4f}")
+    print(f"global_std  = {rewards.std():.4f}")
+    print(f"global_min  = {rewards.min():.4f}")
+    print(f"global_max  = {rewards.max():.4f}")
+
+    valid_json = sum(
+        1 for c in completions
+        if _safe_json(clean_prediction(c[0]["content"]))
+    )
+    print(f"json_valid  = {valid_json/len(completions):.4f}")
+
+    print("\nPER-GROUP STATS")
+
+    group_means = []
+    group_stds = []
+
+    for i, (k, vals) in enumerate(group_rewards.items()):
+        v = np.array(vals, dtype=np.float32)
+
+        mean = v.mean()
+        std = v.std()
+
+        group_means.append(mean)
+        group_stds.append(std)
+
+        print("-" * 50)
+        print(f"group {i}")
+        print(f"size = {len(v)}")
+        print(f"mean = {mean:.4f}")
+        print(f"std  = {std:.4f}")
+        print(f"rewards = {[round(x, 4) for x in v]}")
+
+    group_means = np.array(group_means, dtype=np.float32)
+    group_stds = np.array(group_stds, dtype=np.float32)
+
+    print("\nGROUP SUMMARY")
+    print(f"mean_of_means = {group_means.mean():.4f}")
+    print(f"std_of_means  = {group_means.std():.4f}")
+    print(f"mean_of_std   = {group_stds.mean():.4f}")
+    print(f"n_groups      = {len(group_means)}")
+
+def _safe_json(s):
+    try:
+        json.loads(s)
+        return True
+    except Exception:
+        return False
+
 def grpo_reward_fn(prompts, completions, answer, **kwargs):
+    # inspect_grpo_rewards(
+    #     prompts,
+    #     completions,
+    #     answer,
+    # )
+
     return [
-        compute_sample_f1(gt_json, completion[0]["content"])
+        compute_sample_f1(
+            gt_json,
+            clean_prediction(completion[0]["content"])
+        )
         for completion, gt_json in zip(completions, answer)
     ]
