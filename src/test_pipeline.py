@@ -21,9 +21,25 @@ def parse_args():
     parser.add_argument("--dataset_repo", type=str, default="disi-unibo-nlp/Pile-NER-biomed-IOB")
     parser.add_argument("--model_repo", type=str, default="google/medgemma-1.5-4b-it")
     parser.add_argument("--checkpoint_repo", type=str, default="frc00/UniversalMedNER")
-    parser.add_argument('--checkpoint_folder', type=str, default=None)
+    parser.add_argument("--mode", type=str, choices=["baseline", "sft", "grpo"], default="baseline")
+    parser.add_argument("--sft_checkpoint_folder", type=str, default=None)
+    parser.add_argument("--grpo_checkpoint_folder", type=str, default=None)
     parser.add_argument("--verbose", action="store_true", default=False)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.mode in ("sft", "grpo") and args.sft_checkpoint_folder is None:
+        parser.error("--sft_checkpoint_folder is required for modes 'sft' and 'grpo'")
+    if args.mode == "grpo" and args.grpo_checkpoint_folder is None:
+        parser.error("--grpo_checkpoint_folder is required for mode 'grpo'")
+    return args
+
+def load_adapter(model, checkpoint_repo, checkpoint_folder):
+    """Download a LoRA adapter from the hub and attach it to `model`."""
+    adapter_dir = huggingface_hub.snapshot_download(
+        repo_id=checkpoint_repo,
+        allow_patterns=f"{checkpoint_folder}/*"
+    )
+    adapter_dir = Path(adapter_dir) / checkpoint_folder
+    return peft.PeftModel.from_pretrained(model, adapter_dir)
 
 if __name__ == "__main__":
     print('[INFO] Initializing run...')
@@ -57,18 +73,12 @@ if __name__ == "__main__":
         device_map="cuda:0",
         torch_dtype=torch.bfloat16
     )
-    if args.checkpoint_folder is not None:
-        local_adapter_dir = huggingface_hub.snapshot_download(
-            repo_id=args.checkpoint_repo,
-            allow_patterns=f"{args.checkpoint_folder}/*"
-        )
-        local_adapter_dir = Path(local_adapter_dir) / args.checkpoint_folder
-        model = peft.PeftModel.from_pretrained(
-            base_model,
-            local_adapter_dir
-        )
-    else:
-        model = base_model
+    model = base_model
+    if args.mode in ("sft", "grpo"):
+        model = load_adapter(model, args.checkpoint_repo, args.sft_checkpoint_folder)
+        if args.mode == "grpo":
+            model = model.merge_and_unload()
+            model = load_adapter(model, args.checkpoint_repo, args.grpo_checkpoint_folder)
     model.eval()
     print('[OK] Model loaded on device:')
     print(next(model.parameters()).device)

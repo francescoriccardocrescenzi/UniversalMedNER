@@ -51,6 +51,7 @@ if run_step 1; then
   python src/test_pipeline.py \
     --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
     --metrics_path "$RUN_FOLDER/baseline_metrics.json" \
+    --mode baseline \
     --verbose
 fi
 
@@ -67,9 +68,10 @@ fi
 if run_step 3; then
   echo "[STEP 3] TEST SFT MODEL"
   python src/test_pipeline.py \
-    --checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
     --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
     --metrics_path "$RUN_FOLDER/sft_metrics.json" \
+    --mode sft \
+    --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
     --verbose
 fi
 
@@ -87,9 +89,11 @@ fi
 if run_step 5; then
   echo "[STEP 5] TEST GRPO MODEL"
   python src/test_pipeline.py \
-    --checkpoint_folder "$CHECKPOINT_FOLDER_GRPO" \
     --hyperparam_path "$RUN_FOLDER/hyperparam.json" \
     --metrics_path "$RUN_FOLDER/grpo_metrics.json" \
+    --mode grpo \
+    --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
+    --grpo_checkpoint_folder "$CHECKPOINT_FOLDER_GRPO" \
     --verbose
 fi
 
