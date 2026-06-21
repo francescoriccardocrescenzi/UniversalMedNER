@@ -18,7 +18,7 @@ import torch
 
 def tokenize(s):
     """Split entity span into a set lowercase words."""
-    return set(s.lower().split())
+    return set(str(s).lower().split())
 
 def iou(a, b):
     """Compute IoU between two entity spans.
@@ -131,11 +131,21 @@ def run_batched_inference(model, processor, prompts, max_new_tokens=200):
         truncation=True
     ).to(model.device)
 
+    # Stop generation on either the tokenizer's EOS or the chat template's end-of-turn
+    # marker. Don't rely solely on model.generation_config: it can silently end up
+    # missing one of these (e.g. after merging a LoRA adapter), causing generation to
+    # run all the way to max_new_tokens instead of stopping at the turn boundary.
+    eos_token_id = [
+        processor.tokenizer.eos_token_id,
+        processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
+    ]
+
     with torch.inference_mode():
         outputs = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
-            do_sample=False
+            do_sample=False,
+            eos_token_id=eos_token_id,
         )
 
     # Batch decode
@@ -247,8 +257,10 @@ def compute_sample_f1(gt_json, pred_json):
     """Compute micro F1 for a single sample."""
     TP, GT, PRED, json_error = compute_sample_counts(gt_json, pred_json)
 
-    if json_error or GT + PRED == 0:
+    if json_error:
         return 0.0
+    elif GT + PRED == 0:
+        return 1.0
     else:
         return 2 * TP / (GT + PRED)
 

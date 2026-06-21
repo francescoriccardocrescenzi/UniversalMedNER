@@ -154,6 +154,14 @@ def execute_grpo(
         task_type="CAUSAL_LM",
     )
 
+    # Stop generation on either the tokenizer's EOS or the chat template's end-of-turn
+    # marker, derived from the processor rather than hardcoded, so this stays correct
+    # if the model/tokenizer changes.
+    eos_token_id = [
+        processor.tokenizer.eos_token_id,
+        processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
+    ]
+
     grpo_config = trl.GRPOConfig(
         output_dir=str(save_folder),
         
@@ -161,8 +169,7 @@ def execute_grpo(
         push_to_hub=False,
         
         # --- CHECKPOINTING ---
-        save_strategy="steps",
-        save_steps=100,
+        save_strategy="best",
         save_total_limit=2,
         
         # --- EVAL / BEST MODEL ---
@@ -186,9 +193,9 @@ def execute_grpo(
         gradient_checkpointing_kwargs={"use_reentrant": False},
         report_to="wandb",
 
-        beta=0.4,
+        beta=0.04,
         temperature=1.0,
-        generation_kwargs={"eos_token_id": [1, 106]},
+        generation_kwargs={"eos_token_id": eos_token_id},
     )
 
     # Initialize trainer

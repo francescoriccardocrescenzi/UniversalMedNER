@@ -93,6 +93,19 @@ if __name__ == "__main__":
     print('[OK] Model loaded on device:', next(model.parameters()).device)
     print(f"[INFO] Tokenizer EOS: {processor.tokenizer.eos_token_id}")
     print(f"[INFO] Generation config EOS: {model.generation_config.eos_token_id}")
+    # Loading/merging a LoRA adapter can silently drop or reset generation_config.
+    # Fail fast here instead of training/evaluating with a model that never learns
+    # to stop at the chat template's turn boundary.
+    end_of_turn_id = processor.tokenizer.convert_tokens_to_ids("<end_of_turn>")
+    expected_eos = {processor.tokenizer.eos_token_id, end_of_turn_id}
+    actual_eos = model.generation_config.eos_token_id
+    actual_eos = set(actual_eos) if isinstance(actual_eos, (list, tuple)) else {actual_eos}
+    if not expected_eos.issubset(actual_eos):
+        raise ValueError(
+            f"Model generation_config.eos_token_id {actual_eos} is missing one of the "
+            f"expected stop tokens {expected_eos} (tokenizer EOS / <end_of_turn>). "
+            "Generation would not stop at the turn boundary."
+        )
 
     print("[INFO] Starting training...")
     if args.mode == "sft":
