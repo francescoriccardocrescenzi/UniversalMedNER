@@ -187,14 +187,16 @@ def execute_grpo(
         num_generations=num_generations,
         max_completion_length=max_completion_length,
         learning_rate=learning_rate,
+        lr_scheduler_type="constant_with_warmup",
+        warmup_ratio=0.05,
         bf16=True,
 
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         report_to="wandb",
 
-        beta=0.04,
-        temperature=1.0,
+        beta=0.08,
+        temperature=1.3,
         generation_kwargs={"eos_token_id": eos_token_id},
     )
 

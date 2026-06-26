@@ -87,10 +87,13 @@ def compute_sample_counts(gt_json, pred_json):
         entity_types = set(gt.keys()) | set(pred.keys())
 
         for t in entity_types:
-            tp, gt_n, pred_n = compute_entity_counts(
-                gt.get(t, []),
-                pred.get(t, [])
-            )
+            gt_spans = gt.get(t, [])
+            pred_spans = pred.get(t, [])
+
+            if not isinstance(gt_spans, list) or not isinstance(pred_spans, list):
+                raise ValueError("Entity spans must be a list")
+
+            tp, gt_n, pred_n = compute_entity_counts(gt_spans, pred_spans)
 
             TP_total += tp
             GT_total += gt_n
