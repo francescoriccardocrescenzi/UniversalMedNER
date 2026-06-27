@@ -139,6 +139,8 @@ if __name__ == "__main__":
             num_generations=hyperparam.num_generations,
             max_completion_length=hyperparam.max_completion_length,
             num_epochs=hyperparam.num_epochs,
+            beta=hyperparam.beta,
+            temperature=hyperparam.temperature,
         )
     print("[OK] Training complete")
 

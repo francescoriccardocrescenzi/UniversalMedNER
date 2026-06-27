@@ -20,11 +20,13 @@
         "lora_rank": 16,
         "batch_size": 8,
         "gradient_accumulation_steps": 8,
-        "num_generations": 4,
+        "num_generations": 8,
         "max_completion_length": 600,
         "num_epochs": 1,
-        "max_train_samples": 1000,
-        "max_validation_samples": 100
+        "max_train_samples": 6000,
+        "max_validation_samples": 100,
+        "beta": 0.08,
+        "temperature": 1.3
     },
     "test": {
         "max_test_samples": null,

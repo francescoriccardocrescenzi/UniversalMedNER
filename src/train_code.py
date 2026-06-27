@@ -141,6 +141,8 @@ def execute_grpo(
     num_generations=4,
     max_completion_length=1024,
     num_epochs=3,
+    beta=0.04,
+    temperature=1.0,
 ):
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples else ds["train"]
@@ -195,8 +197,8 @@ def execute_grpo(
         gradient_checkpointing_kwargs={"use_reentrant": False},
         report_to="wandb",
 
-        beta=0.08,
-        temperature=1.3,
+        beta=beta,
+        temperature=temperature,
         generation_kwargs={"eos_token_id": eos_token_id},
     )
 
