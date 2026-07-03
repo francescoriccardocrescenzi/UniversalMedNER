@@ -143,6 +143,7 @@ def execute_grpo(
     num_epochs=3,
     beta=0.04,
     temperature=1.0,
+    reward_fn="structured",
 ):
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples else ds["train"]
@@ -213,7 +214,7 @@ def execute_grpo(
     # Initialize trainer
     grpo_trainer = trl.GRPOTrainer(
         model=model,
-        reward_funcs=[ec.grpo_reward_fn],
+        reward_funcs=[ec.REWARD_FUNCTIONS[reward_fn]],
         args=grpo_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,

@@ -23,6 +23,22 @@ def tokenize(s):
     """Split entity span into a set lowercase words."""
     return set(str(s).lower().split())
 
+def lower_keys(d):
+    """Lowercase a dict's keys so entity-type matching is case-insensitive.
+
+    Span lists from keys that collide after lowercasing (e.g. "Disease" and
+    "DISEASE") are concatenated rather than one silently overwriting the other.
+    Values that aren't lists are left for the caller's own validation to reject.
+    """
+    merged = {}
+    for k, v in d.items():
+        lk = str(k).lower()
+        if lk in merged and isinstance(merged[lk], list) and isinstance(v, list):
+            merged[lk] = merged[lk] + v
+        else:
+            merged[lk] = v
+    return merged
+
 def iou(a, b, mode="soft"):
     """Compute a match score between two entity spans.
 
@@ -105,6 +121,10 @@ def compute_sample_counts(gt_json, pred_json, modes=F1_MODES):
 
         if not isinstance(pred, dict) or not isinstance(gt, dict):
             raise ValueError("Loaded JSON must be a dict")
+
+        # Entity-type keys are matched case-insensitively, same as span matching.
+        gt = lower_keys(gt)
+        pred = lower_keys(pred)
 
         totals = {mode: [0, 0, 0] for mode in modes}
 
@@ -360,7 +380,7 @@ def _safe_json(s):
     except Exception:
         return False
 
-def grpo_reward_fn(prompts, completions, answer, **kwargs):
+def soft_f1_reward_fn(prompts, completions, answer, **kwargs):
     # inspect_grpo_rewards(
     #     prompts,
     #     completions,
@@ -374,3 +394,120 @@ def grpo_reward_fn(prompts, completions, answer, **kwargs):
         )
         for completion, gt_json in zip(completions, answer)
     ]
+
+
+# --- STRUCTURED REWARD ---
+# Implements the level-based reward described in
+# data/reward_function_pseudocode.md: JSON validity, then correct entity-type
+# keys, then per-type extraction quality (exact-match precision/recall).
+
+STRUCTURED_REWARD_BONUS = 1.0  # B in the pseudocode
+
+def _has_correct_structure(d):
+    """Check that `d` is a Dict[str -> List[str]]."""
+    if not isinstance(d, dict):
+        return False
+    for k, v in d.items():
+        if not isinstance(k, str) or not isinstance(v, list):
+            return False
+        if not all(isinstance(e, str) for e in v):
+            return False
+    return True
+
+def _compute_extraction_score(t_list, o_list):
+    """Per-type extraction score for a positive entity type (exact match).
+
+    +1/N for each correctly predicted GT span (no duplicates), -1/N for each
+    wrong or duplicate prediction, -1/N for each GT span never predicted.
+    Matching is case-insensitive, consistent with strict-mode F1.
+    """
+    n = len(t_list)
+    t_list = [str(s).lower() for s in t_list]
+    score = 0.0
+    matches = []
+
+    for oe in o_list:
+        oe = str(oe).lower()
+        if oe in t_list and oe not in matches:
+            matches.append(oe)
+            score += 1 / n
+        else:
+            score -= 1 / n
+
+    n_missed = n - len(matches)
+    score -= n_missed / n
+
+    return score
+
+def compute_structured_reward(gt_json, pred_json, bonus=STRUCTURED_REWARD_BONUS):
+    """Compute the structured reward for a single sample.
+
+    GT is assumed to always be well-formed (Dict[str -> List[str]], one entry
+    per expected entity type, empty list for negative types).
+    """
+    R = 0.0
+
+    # Level 1: JSON parsing
+    try:
+        out_dict = json.loads(pred_json)
+    except json.JSONDecodeError:
+        return R
+    if not _has_correct_structure(out_dict):
+        return R
+    R += 1.0
+
+    # Entity-type keys are matched case-insensitively, same as span matching.
+    out_dict = lower_keys(out_dict)
+    gt = lower_keys(json.loads(gt_json))
+    ent_types = list(gt.keys())
+    n_types = len(ent_types)
+
+    # Level 2: key matching
+    for key in out_dict.keys():
+        if key not in ent_types:
+            return R          # wrong key found: stop here, no bonus, no quality component
+        R += 1 / n_types    # partial credit per correct key, normalized by expected count
+
+    # Missing keys: all output keys passed the check above, so if the counts
+    # differ the model omitted some expected types. Cap reward here.
+    if len(out_dict) != n_types:
+        return R
+
+    R += bonus  # margin for the possible negative signal from the quality component
+
+    # Level 3: extraction quality
+    Q_R = 0.0
+    for t in ent_types:
+        t_list = gt[t]
+        o_list = out_dict[t]  # safe: exact key match enforced above
+
+        if len(t_list) == 0:
+            score = 1.0 if len(o_list) == 0 else -1.0
+        else:
+            score = _compute_extraction_score(t_list, o_list)
+
+        Q_R += score / n_types
+
+    # Clip to prevent quality penalty from erasing the format reward: correct
+    # format should always beat wrong format (R=0).
+    if bonus + Q_R < 0:
+        Q_R = -bonus
+
+    return R + Q_R
+
+def structured_reward_fn(prompts, completions, answer, **kwargs):
+    return [
+        compute_structured_reward(
+            gt_json,
+            clean_prediction(completion[0]["content"])
+        )
+        for completion, gt_json in zip(completions, answer)
+    ]
+
+
+# --- REWARD SELECTION ---
+
+REWARD_FUNCTIONS = {
+    "structured": structured_reward_fn,
+    "soft_f1": soft_f1_reward_fn,
+}

@@ -13,6 +13,7 @@ import huggingface_hub
 import sacremoses
 import wandb
 import dataset_code as dc
+import eval_code as ec
 import train_code as trc
 
 TARGET_MODULES = {
@@ -36,6 +37,15 @@ def parse_args():
     parser.add_argument("--checkpoint_load_folder", type=str, default=None)
     parser.add_argument("--label", type=str)
     parser.add_argument("--mode", type=str, choices=["sft", "grpo"], default="sft")
+    parser.add_argument(
+        "--reward_fn",
+        type=str,
+        choices=list(ec.REWARD_FUNCTIONS.keys()),
+        default="structured",
+        help="Which GRPO reward function to use (only relevant for --mode grpo): "
+             "'structured' (level-based JSON/keys/extraction-quality reward) or "
+             "'soft_f1' (IoU-based soft micro F1).",
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -141,6 +151,7 @@ if __name__ == "__main__":
             num_epochs=hyperparam.num_epochs,
             beta=hyperparam.beta,
             temperature=hyperparam.temperature,
+            reward_fn=args.reward_fn,
         )
     print("[OK] Training complete")
 
