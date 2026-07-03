@@ -25,6 +25,14 @@ def parse_args():
     parser.add_argument("--sft_checkpoint_folder", type=str, default=None)
     parser.add_argument("--grpo_checkpoint_folder", type=str, default=None)
     parser.add_argument("--verbose", action="store_true", default=False)
+    parser.add_argument(
+        "--f1_mode",
+        type=str,
+        choices=["soft", "strict", "both"],
+        default="both",
+        help="Which F1 metric(s) to compute: 'soft' (IoU-based, partial matches), "
+             "'strict' (exact-match only), or 'both'.",
+    )
     args = parser.parse_args()
     if args.mode in ("sft", "grpo") and args.sft_checkpoint_folder is None:
         parser.error("--sft_checkpoint_folder is required for modes 'sft' and 'grpo'")
@@ -102,14 +110,17 @@ if __name__ == "__main__":
         evc.test_model_on_batch(model, processor, pile_ds, indices=list(range(8)))
         print('[OK] Tested model on single batch')
     
+    f1_modes = ("soft", "strict") if args.f1_mode == "both" else (args.f1_mode,)
+
     print('[INFO] Evaluating model on test set...')
     metric_dict = evc.evaluate_dataset(
-        model, 
-        processor, 
-        pile_ds, 
-        batch_size=hyperparam.batch_size, 
-        split="test", 
-        max_samples=hyperparam.max_test_samples, 
+        model,
+        processor,
+        pile_ds,
+        batch_size=hyperparam.batch_size,
+        split="test",
+        max_samples=hyperparam.max_test_samples,
+        modes=f1_modes,
     )
     print('[OK] Evaluated model on test set:')
     print(metric_dict)

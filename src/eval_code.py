@@ -7,6 +7,7 @@ and to compute micro F1 over its outputs.
 # --- IMPORTS ---
 
 from pathlib import Path
+from collections import Counter
 import json
 from tqdm import tqdm
 import numpy as np
@@ -16,29 +17,37 @@ import torch
 
 # --- METRIC COMPUTATION HELPERS ---
 
+F1_MODES = ("soft", "strict")
+
 def tokenize(s):
     """Split entity span into a set lowercase words."""
     return set(str(s).lower().split())
 
-def iou(a, b):
-    """Compute IoU between two entity spans.
+def iou(a, b, mode="soft"):
+    """Compute a match score between two entity spans.
 
-    Apply `tokenize` to obtain token sets for both.
+    Apply `tokenize` to obtain token sets for both. In "soft" mode the score is
+    the IoU of the two token sets, allowing partial credit. In "strict" mode
+    the score is 1.0 if the token sets are identical and 0.0 otherwise.
     """
     A, B = tokenize(a), tokenize(b)
     if not A and not B:
         return 1.0
     if not A or not B:
         return 0.0
+    if mode == "strict":
+        return 1.0 if A == B else 0.0
     return len(A & B) / len(A | B)
 
-def compute_entity_counts(gt_list, pred_list):
+def compute_entity_counts(gt_list, pred_list, mode="soft"):
     """Compute TP, GT_count, PRED_count for a GT and a predicted entity span.
 
     Pass a list of ground truth spans and a list of predicted spans associated with the
-    same entity. A matching is found between the two lists that maximizes total IoU.
-    Then the followuing numbers are returned:
-        - TP = total IoU
+    same entity. A matching is found between the two lists that maximizes total score,
+    where the pairwise score is given by `iou(mode=mode)`. Then the following numbers
+    are returned:
+        - TP = total matched score (total IoU in "soft" mode, number of exact matches
+          in "strict" mode)
         - GT_count = number of GT spans
         - PRED_count = number of predicted spans
     """
@@ -49,29 +58,46 @@ def compute_entity_counts(gt_list, pred_list):
         # Do not attempt to match if there are no ground truth spans or no
         # predicted spans. In case that happens, short circuit execution
         return 0, GT_count, PRED_count
-    else:
-        # Compute all IoUs to guide matching algorithm
-        iou_matrix = np.zeros((GT_count, PRED_count))
-        for i, gt in enumerate(gt_list):
-            for j, pred in enumerate(pred_list):
-                iou_matrix[i, j] = iou(gt, pred)
 
-        # Find maximum matching
-        row_ind, col_ind = sp_optimize.linear_sum_assignment(-iou_matrix)
-
-        # Compute total IoU in maximum matching
-        TP = sum(iou_matrix[i, j] for i, j in zip(row_ind, col_ind))
-
+    if mode == "strict":
+        # Exact-match scores are binary and equality of token sets is
+        # transitive, so the matching graph decomposes into independent
+        # cliques, one per distinct normalized span. The maximum matching
+        # size is then just the multiset-intersection cardinality between
+        # normalized GT and predicted spans, computed in linear time -
+        # no need for the general O(n^3) Hungarian algorithm below.
+        gt_counts = Counter(frozenset(tokenize(s)) for s in gt_list)
+        pred_counts = Counter(frozenset(tokenize(s)) for s in pred_list)
+        TP = sum(
+            min(gt_counts[k], pred_counts[k])
+            for k in gt_counts.keys() & pred_counts.keys()
+        )
         return TP, GT_count, PRED_count
 
-def compute_sample_counts(gt_json, pred_json):
-    """
-    Compute TP, GT_count, PRED_count, json_error_flag for a GT NER json and a predicted NER json.
+    # Compute all pairwise scores to guide matching algorithm
+    score_matrix = np.zeros((GT_count, PRED_count))
+    for i, gt in enumerate(gt_list):
+        for j, pred in enumerate(pred_list):
+            score_matrix[i, j] = iou(gt, pred, mode=mode)
 
-    Try to parse the jsons. If this is impossible return null metrics and a true json_error_flag variable.
-    Otherwise, compute TP, GT_count, PRED_count for each entity by passing the associated
-    spans to `compute_entity_counts`. Then sum the results and return them together with a false json_error_flag
-    variable.
+    # Find maximum matching
+    row_ind, col_ind = sp_optimize.linear_sum_assignment(-score_matrix)
+
+    # Compute total score in maximum matching
+    TP = sum(score_matrix[i, j] for i, j in zip(row_ind, col_ind))
+
+    return TP, GT_count, PRED_count
+
+def compute_sample_counts(gt_json, pred_json, modes=F1_MODES):
+    """
+    Compute TP, GT_count, PRED_count per F1 mode, and a json_error_flag, for a GT
+    NER json and a predicted NER json.
+
+    Try to parse the jsons. If this is impossible return null metrics and a true
+    json_error_flag variable. Otherwise, compute TP, GT_count, PRED_count for each
+    entity and each requested mode by passing the associated spans to
+    `compute_entity_counts`. Then sum the results and return them, keyed by mode,
+    together with a false json_error_flag variable.
     """
     try:
         pred = json.loads(pred_json)
@@ -80,9 +106,7 @@ def compute_sample_counts(gt_json, pred_json):
         if not isinstance(pred, dict) or not isinstance(gt, dict):
             raise ValueError("Loaded JSON must be a dict")
 
-        TP_total = 0
-        GT_total = 0
-        PRED_total = 0
+        totals = {mode: [0, 0, 0] for mode in modes}
 
         entity_types = set(gt.keys()) | set(pred.keys())
 
@@ -93,15 +117,15 @@ def compute_sample_counts(gt_json, pred_json):
             if not isinstance(gt_spans, list) or not isinstance(pred_spans, list):
                 raise ValueError("Entity spans must be a list")
 
-            tp, gt_n, pred_n = compute_entity_counts(gt_spans, pred_spans)
+            for mode in modes:
+                tp, gt_n, pred_n = compute_entity_counts(gt_spans, pred_spans, mode=mode)
+                totals[mode][0] += tp
+                totals[mode][1] += gt_n
+                totals[mode][2] += pred_n
 
-            TP_total += tp
-            GT_total += gt_n
-            PRED_total += pred_n
-
-        return TP_total, GT_total, PRED_total, 0
+        return {mode: tuple(v) for mode, v in totals.items()}, 0
     except (json.JSONDecodeError, ValueError):
-        return 0, 0, 0, 1
+        return {mode: (0, 0, 0) for mode in modes}, 1
     
 
 # --- INFERENCE AND EVALUATION ---
@@ -196,21 +220,22 @@ def evaluate_dataset(
     ds,
     batch_size=8,
     split="test",
-    max_samples=None
+    max_samples=None,
+    modes=F1_MODES
 ):
-    """Run inference on dataset and return micro F1 and number of json parsing errors encountered.
+    """Run inference on dataset and return micro F1 (per requested mode) and number
+    of json parsing errors encountered.
 
-    You may specify a split, a batch size and an optional maximum number of samples.
-    The metrics are saved to disk in the specified folder.
+    You may specify a split, a batch size, an optional maximum number of samples, and
+    which F1 mode(s) to compute ("soft", "strict", or both). The metrics are saved to
+    disk in the specified folder.
     """
     # Prepare model for inference
     if model.is_gradient_checkpointing:
         model.gradient_checkpointing_disable()
 
     # Set up accumulators
-    TP_total = 0
-    GT_total = 0
-    PRED_total = 0
+    totals = {mode: [0, 0, 0] for mode in modes}
     json_errors_total = 0
 
     # Prepare iteration
@@ -233,32 +258,33 @@ def evaluate_dataset(
         preds = [clean_prediction(p) for p in preds]
         # Compute and accumulate counts
         for gt_json, pred in zip(gt_jsons, preds):
-            tp, gt_c, pred_c, err = compute_sample_counts(gt_json, pred)
-            TP_total += tp
-            GT_total += gt_c
-            PRED_total += pred_c
+            counts, err = compute_sample_counts(gt_json, pred, modes=modes)
+            for mode in modes:
+                tp, gt_c, pred_c = counts[mode]
+                totals[mode][0] += tp
+                totals[mode][1] += gt_c
+                totals[mode][2] += pred_c
             json_errors_total += err
 
-    # Compute F1
-    f1 = 2 * TP_total / (GT_total + PRED_total) if GT_total + PRED_total > 0 else 0
-
     # Wrap into dictionary
-    metric_dict = {
-        'TP_total': float(TP_total),
-        'GT_total': int(GT_total),
-        'PRED_total': int(PRED_total),
-        'F1': float(f1),
-        'json_errors_total': int(json_errors_total)
-    }
+    metric_dict = {'json_errors_total': int(json_errors_total)}
+    for mode in modes:
+        TP_total, GT_total, PRED_total = totals[mode]
+        f1 = 2 * TP_total / (GT_total + PRED_total) if GT_total + PRED_total > 0 else 0
+        metric_dict[f'TP_total_{mode}'] = float(TP_total)
+        metric_dict[f'GT_total_{mode}'] = int(GT_total)
+        metric_dict[f'PRED_total_{mode}'] = int(PRED_total)
+        metric_dict[f'F1_{mode}'] = float(f1)
 
     return metric_dict
 
 
 # --- GRPO REWARD ---
 
-def compute_sample_f1(gt_json, pred_json):
-    """Compute micro F1 for a single sample."""
-    TP, GT, PRED, json_error = compute_sample_counts(gt_json, pred_json)
+def compute_sample_f1(gt_json, pred_json, mode="soft"):
+    """Compute micro F1 for a single sample, using the given F1 mode."""
+    counts, json_error = compute_sample_counts(gt_json, pred_json, modes=(mode,))
+    TP, GT, PRED = counts[mode]
 
     if json_error:
         return 0.0

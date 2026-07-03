@@ -177,11 +177,12 @@ def execute_grpo(
         # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
         eval_steps=50,
+        per_device_eval_batch_size=batch_size,
         logging_steps=10,
         load_best_model_at_end=True,
         metric_for_best_model="eval_reward",
         greater_is_better=True,
-        
+
         # --- TRAINING ---
         num_train_epochs=num_epochs,
         per_device_train_batch_size=batch_size,
@@ -197,10 +198,17 @@ def execute_grpo(
         gradient_checkpointing_kwargs={"use_reentrant": False},
         report_to="wandb",
 
+        log_completions=True,
+        num_completions_to_print=num_generations,
+
         beta=beta,
         temperature=temperature,
         generation_kwargs={"eos_token_id": eos_token_id},
     )
+
+    # log_completions=True still writes parquet files and wandb tables, which is what we
+    # actually want; this just silences the rich console table TRL prints alongside it.
+    trl.trainer.grpo_trainer.print_prompt_completions_sample = lambda *args, **kwargs: None
 
     # Initialize trainer
     grpo_trainer = trl.GRPOTrainer(
