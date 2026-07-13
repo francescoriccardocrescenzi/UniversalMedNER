@@ -97,7 +97,7 @@ def execute_sft(
         gradient_accumulation_steps=gradient_accumulation_steps,
         gradient_checkpointing=True,
         optim="adamw_torch_fused",
-        logging_steps=50,
+        logging_steps=1,
         learning_rate=learning_rate,
         bf16=True,
         max_grad_norm=0.3,
@@ -179,7 +179,7 @@ def execute_grpo(
         eval_strategy="steps",
         eval_steps=50,
         per_device_eval_batch_size=batch_size,
-        logging_steps=10,
+        logging_steps=1,
         load_best_model_at_end=True,
         metric_for_best_model="eval_reward",
         greater_is_better=True,
@@ -214,7 +214,7 @@ def execute_grpo(
     # Initialize trainer
     grpo_trainer = trl.GRPOTrainer(
         model=model,
-        reward_funcs=[ec.REWARD_FUNCTIONS[reward_fn]],
+        reward_funcs=ec.REWARD_FUNCTIONS[reward_fn],
         args=grpo_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,

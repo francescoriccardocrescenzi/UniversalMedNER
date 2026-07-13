@@ -70,10 +70,16 @@ if __name__ == "__main__":
         max_entities=hyperparam.max_entities,
         detok=detok,
         random_seed=hyperparam.random_seed,
+        max_negatives=getattr(hyperparam, "max_negatives", None),
     )
     pile_ds = dc.get_split_ds(pile_ds, hyperparam.validation_size, hyperparam.test_size, hyperparam.random_seed)
     print("[OK] Dataset prepared:")
     print(pile_ds)
+
+    print("[INFO] Computing negative-entity statistics...")
+    negative_stats = dc.compute_negative_stats(pile_ds["train"])
+    print("[OK] Negative-entity statistics:")
+    print(negative_stats)
 
     print("[INFO] Loading model...")
     processor = transformers.AutoProcessor.from_pretrained(args.model_repo, backend="pil")

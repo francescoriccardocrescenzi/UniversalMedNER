@@ -26,12 +26,41 @@ def parse_args():
     parser.add_argument("--grpo_checkpoint_folder", type=str, default=None)
     parser.add_argument("--verbose", action="store_true", default=False)
     parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="Sampling temperature for generation. Leaving this and --top_p unset "
+             "keeps generation greedy (do_sample=False), matching prior behavior.",
+    )
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=None,
+        help="Nucleus sampling top-p for generation. Leaving this and --temperature "
+             "unset keeps generation greedy (do_sample=False), matching prior behavior.",
+    )
+    parser.add_argument(
         "--f1_mode",
         type=str,
         choices=["soft", "strict", "both"],
         default="both",
         help="Which F1 metric(s) to compute: 'soft' (IoU-based, partial matches), "
              "'strict' (exact-match only), or 'both'.",
+    )
+    parser.add_argument(
+        "--skip_reward_metrics",
+        action="store_true",
+        default=False,
+        help="Skip computing the mean of every GRPO reward component "
+             "(structured levels, their sum, and soft F1) over the test set.",
+    )
+    parser.add_argument(
+        "--completions_path",
+        type=Path,
+        default=None,
+        help="Where to save every test-set prompt/completion/ground-truth/reward "
+             "row as a parquet file, mirroring GRPOTrainer's completions logging. "
+             "Defaults to 'completions.parquet' next to --metrics_path.",
     )
     args = parser.parse_args()
     if args.mode in ("sft", "grpo") and args.sft_checkpoint_folder is None:
@@ -58,6 +87,19 @@ if __name__ == "__main__":
     np.random.seed(hyperparam.random_seed)
     print('[OK] Hyperparameters loaded:')
     print(hyperparam)
+
+    # Generation must be capped at the same length used during GRPO training so
+    # test-time truncation behavior (and the resulting reward/F1 numbers) matches
+    # what the model was actually optimized against, regardless of --mode.
+    if "grpo" not in hyperparam_raw or "max_completion_length" not in hyperparam_raw["grpo"]:
+        raise ValueError(
+            "hyperparam file is missing grpo.max_completion_length: the testing "
+            "script needs it to cap generation length consistently with GRPO training."
+        )
+    max_completion_length = hyperparam_raw["grpo"]["max_completion_length"]
+    print('[OK] Using max_completion_length from GRPO hyperparameters:', max_completion_length)
+
+    completions_path = args.completions_path or (args.metrics_path.parent / "completions.parquet")
 
     print('[INFO] Preparing dataset...')
     detok = sacremoses.MosesDetokenizer(lang="en")
@@ -107,9 +149,12 @@ if __name__ == "__main__":
     if args.verbose:
         print('[INFO] Testing model on single batch...')
         print(" **** Test best checkpoint of fine-tuned model on a single batch ****")
-        evc.test_model_on_batch(model, processor, pile_ds, indices=list(range(8)))
+        evc.test_model_on_batch(
+            model, processor, pile_ds, indices=list(range(8)), max_new_tokens=max_completion_length,
+            temperature=args.temperature, top_p=args.top_p,
+        )
         print('[OK] Tested model on single batch')
-    
+
     f1_modes = ("soft", "strict") if args.f1_mode == "both" else (args.f1_mode,)
 
     print('[INFO] Evaluating model on test set...')
@@ -121,9 +166,15 @@ if __name__ == "__main__":
         split="test",
         max_samples=hyperparam.max_test_samples,
         modes=f1_modes,
+        compute_rewards=not args.skip_reward_metrics,
+        max_new_tokens=max_completion_length,
+        completions_path=completions_path,
+        temperature=args.temperature,
+        top_p=args.top_p,
     )
     print('[OK] Evaluated model on test set:')
     print(metric_dict)
+    print('[OK] Completions saved to:', completions_path)
 
     print('[INFO] Saving metrics to disk...')
     with open(args.metrics_path, "w") as f:

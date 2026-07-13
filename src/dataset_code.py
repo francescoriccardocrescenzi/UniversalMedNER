@@ -95,12 +95,13 @@ def extract_entity_spans(tokens, tags):
 
     return entity_spans
 
-def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, base_seed):
+def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, base_seed, max_negatives=None):
     """Create SFT sample from IOB sample.
 
     Uniformly sample some of the entities present in the current sample
     and use them and the associated spans as positives.
-    Then sample negative entities using inverse frequencies as weights.
+    Then sample negative entities using inverse frequencies as weights,
+    capped at `max_negatives` (uncapped if `max_negatives` is None).
     Create a conversation snippet with:
         - a system prompt instructing the model to think silently
         - a user prompt describing the NER task and passing the text and the entities
@@ -121,7 +122,7 @@ def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, bas
     entity_spans = extract_entity_spans(tokens, tags)
 
     n_pos = min(len(entity_spans), np.random.randint(1, n_entities + 1))
-    n_neg = n_entities - n_pos
+    n_neg = n_entities - n_pos if max_negatives is None else min(n_entities - n_pos, max_negatives)
 
     positives = sample_positives(n_pos, entity_spans)
     negatives = sample_negatives(n_neg, entity_array, entity_weights)
@@ -177,7 +178,7 @@ def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, bas
         ]
     }
 
-def create_sft_ds(ds, max_entities, detok, random_seed):
+def create_sft_ds(ds, max_entities, detok, random_seed, max_negatives=None):
     """Convert a whole IOB format NER dataset into an SFT format dataset.
 
     Apply `format_sft` to each sample.
@@ -193,14 +194,15 @@ def create_sft_ds(ds, max_entities, detok, random_seed):
             entity_array,
             entity_weights,
             detok,
-            base_seed
+            base_seed,
+            max_negatives
         ),
         with_indices=True,
         remove_columns=["tokens", "ner_tags"]
     )
 
-def create_grpo_ds(ds, max_entities, detok, random_seed):
-    sft_ds = create_sft_ds(ds, max_entities, detok, random_seed)
+def create_grpo_ds(ds, max_entities, detok, random_seed, max_negatives=None):
+    sft_ds = create_sft_ds(ds, max_entities, detok, random_seed, max_negatives)
     return sft_ds.map(
         lambda sample: {
             "prompt": sample["messages"][:-1],
@@ -208,3 +210,42 @@ def create_grpo_ds(ds, max_entities, detok, random_seed):
         },
         remove_columns=["messages"]
     )
+
+def compute_negative_stats(ds):
+    """Compute per-sample positive/negative entity-label statistics for a formatted dataset.
+
+    Works on both SFT-formatted samples ("messages", assistant turn holds the
+    ner json) and GRPO-formatted samples ("answer" holds the ner json).
+    """
+    n_pos_total = 0
+    n_neg_total = 0
+    n_all_positive = 0
+    n_all_negative = 0
+
+    for sample in ds:
+        if "answer" in sample:
+            ner_json = sample["answer"]
+        else:
+            ner_json = sample["messages"][-1]["content"]
+
+        entities = json.loads(ner_json)
+        n_pos = sum(1 for spans in entities.values() if len(spans) > 0)
+        n_neg = len(entities) - n_pos
+
+        n_pos_total += n_pos
+        n_neg_total += n_neg
+        n_all_positive += int(n_neg == 0)
+        n_all_negative += int(n_pos == 0)
+
+    n_samples = len(ds)
+    n_labels_total = n_pos_total + n_neg_total
+
+    return {
+        "n_samples": n_samples,
+        "mean_labels_per_sample": n_labels_total / n_samples,
+        "mean_positive_per_sample": n_pos_total / n_samples,
+        "mean_negative_per_sample": n_neg_total / n_samples,
+        "negative_label_rate": n_neg_total / n_labels_total if n_labels_total else 0.0,
+        "pct_samples_all_positive": n_all_positive / n_samples,
+        "pct_samples_all_negative": n_all_negative / n_samples,
+    }
