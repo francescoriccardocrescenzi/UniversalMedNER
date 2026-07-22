@@ -2,7 +2,6 @@ import argparse
 from pathlib import Path
 import numpy as np
 import json
-import types
 
 import torch
 import transformers
@@ -16,7 +15,6 @@ import eval_code as evc
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hyperparam_path", type=Path)
     parser.add_argument("--metrics_path", type=Path)
     parser.add_argument("--dataset_repo", type=str, default="disi-unibo-nlp/Pile-NER-biomed-IOB")
     parser.add_argument("--model_repo", type=str, default="google/medgemma-1.5-4b-it")
@@ -62,6 +60,23 @@ def parse_args():
              "row as a parquet file, mirroring GRPOTrainer's completions logging. "
              "Defaults to 'completions.parquet' next to --metrics_path.",
     )
+    # Hyperparameters: no defaults here. src/run_full_pipeline.sh is the single
+    # source of truth for hyperparameter defaults and always passes every one of
+    # these explicitly.
+    parser.add_argument("--random_seed", type=int, required=True)
+    parser.add_argument("--validation_size", type=float, required=True)
+    parser.add_argument("--test_size", type=float, required=True)
+    parser.add_argument("--max_entities", type=int, required=True)
+    parser.add_argument("--test_batch_size", type=int, required=True)
+    parser.add_argument("--max_test_samples", type=int, default=None)
+    parser.add_argument(
+        "--grpo_max_completion_length",
+        type=int,
+        required=True,
+        help="Cap on generation length, matching what GRPO training used, for "
+             "consistent truncation behavior across all --mode values.",
+    )
+
     args = parser.parse_args()
     if args.mode in ("sft", "grpo") and args.sft_checkpoint_folder is None:
         parser.error("--sft_checkpoint_folder is required for modes 'sft' and 'grpo'")
@@ -81,23 +96,13 @@ def load_adapter(model, checkpoint_repo, checkpoint_folder):
 if __name__ == "__main__":
     print('[INFO] Initializing run...')
     args = parse_args()
-    with open(args.hyperparam_path, 'r') as f:
-        hyperparam_raw = json.load(f)
-    hyperparam = types.SimpleNamespace(**{**hyperparam_raw["shared"], **hyperparam_raw["test"]})
-    np.random.seed(hyperparam.random_seed)
-    print('[OK] Hyperparameters loaded:')
-    print(hyperparam)
+    np.random.seed(args.random_seed)
 
     # Generation must be capped at the same length used during GRPO training so
     # test-time truncation behavior (and the resulting reward/F1 numbers) matches
     # what the model was actually optimized against, regardless of --mode.
-    if "grpo" not in hyperparam_raw or "max_completion_length" not in hyperparam_raw["grpo"]:
-        raise ValueError(
-            "hyperparam file is missing grpo.max_completion_length: the testing "
-            "script needs it to cap generation length consistently with GRPO training."
-        )
-    max_completion_length = hyperparam_raw["grpo"]["max_completion_length"]
-    print('[OK] Using max_completion_length from GRPO hyperparameters:', max_completion_length)
+    max_completion_length = args.grpo_max_completion_length
+    print('[OK] Using max_completion_length:', max_completion_length)
 
     completions_path = args.completions_path or (args.metrics_path.parent / "completions.parquet")
 
@@ -105,11 +110,11 @@ if __name__ == "__main__":
     detok = sacremoses.MosesDetokenizer(lang="en")
     pile_ds = dc.create_sft_ds(
         ds=datasets.load_dataset(args.dataset_repo),
-        max_entities=hyperparam.max_entities,
+        max_entities=args.max_entities,
         detok=detok,
-        random_seed=hyperparam.random_seed
+        random_seed=args.random_seed
     )
-    pile_ds = dc.get_split_ds(pile_ds, hyperparam.validation_size, hyperparam.test_size, hyperparam.random_seed)
+    pile_ds = dc.get_split_ds(pile_ds, args.validation_size, args.test_size, args.random_seed)
     print('[OK] Dataset prepared:')
     print(pile_ds)
 
@@ -162,9 +167,9 @@ if __name__ == "__main__":
         model,
         processor,
         pile_ds,
-        batch_size=hyperparam.batch_size,
+        batch_size=args.test_batch_size,
         split="test",
-        max_samples=hyperparam.max_test_samples,
+        max_samples=args.max_test_samples,
         modes=f1_modes,
         compute_rewards=not args.skip_reward_metrics,
         max_new_tokens=max_completion_length,

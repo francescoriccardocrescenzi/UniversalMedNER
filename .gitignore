@@ -1,5 +1,4 @@
 data/*
-!data/hyperparam_template.json
 !data/grid_search
 !data/grid_search/*
 !data/test_baseline

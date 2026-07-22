@@ -1,0 +1,70 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+UniversalMedNER fine-tunes MedGemma (`google/medgemma-1.5-4b-it`, an image-text-to-text model used here in text-only mode) for biomedical Named Entity Recognition. The pipeline has two stages: LoRA supervised fine-tuning (SFT) on synthetically-formatted NER data, then LoRA GRPO reinforcement learning on top of the SFT checkpoint, using custom reward functions. Training data comes from `disi-unibo-nlp/Pile-NER-biomed-IOB` (IOB-tagged NER, converted on the fly into instruction/JSON-output format).
+
+## Setup
+
+- A local venv already exists at `.venv` (Python 3.11, managed with `uv`). Activate with `source .venv/bin/activate`, or prefix commands with `.venv/bin/python`.
+- Secrets live in a git-ignored `.env` file with `HF_TOKEN` (must belong to an account with MedGemma access) and `WANDB_API_KEY`. Scripts do `set -a; source .env; set +a`.
+- `HF_HOME` is set to `data/.cache/huggingface` by the shell pipeline scripts so the HF cache lands inside the (git-ignored) `data/` directory rather than `~/.cache`.
+- Docker: `docker_build.sh` builds from `Dockerfile` (expects a `pyproject.toml` that does not currently exist in the repo — the Dockerfile's `uv pip install .` step will fail as-is). `docker_run.sh` mounts `src/` and `data/` and runs `bash src/train.sh`, but no `src/train.sh` exists; the real entry point is `src/run_full_pipeline.sh`. Treat the Docker path as stale/aspirational rather than the working path; prefer running directly against `.venv`.
+
+## Running the pipeline
+
+Everything runs from the repo root. Each run is identified by a `--label`, which maps to a `data/<label>/` directory that receives all outputs (metrics, checkpoints, completions) — it holds no input config. Hyperparameters are plain CLI flags (see "Hyperparameter flags" below), not a file; override any of them by passing `--flag=value` overrides to `run_full_pipeline.sh` (each recognized name is explicitly whitelisted there and forwarded individually to whichever steps use it — anything else is a hard error) or directly to the Python entry points.
+
+`src/run_full_pipeline.sh --label=RUN_LABEL [-1] [-2] [-3] [-4] [-5] [--random_seed=42] [--sft_learning_rate=2e-4] [--grpo_beta=0.0] ...` runs the five stages end-to-end, or only the numbered steps passed:
+1. Test the baseline (no adapter) model → `data/<label>/baseline_metrics.json`
+2. SFT training → checkpoint pushed to HF Hub under `<label>_sft`
+3. Test the SFT checkpoint → `data/<label>/sft_metrics.json`
+4. GRPO training on top of the SFT checkpoint → checkpoint pushed under `<label>_grpo`
+5. Test the GRPO checkpoint → `data/<label>/grpo_metrics.json`
+
+Underlying Python entry points (also runnable directly, but every hyperparameter flag is `required=True` with no python-side default — see "Hyperparameter flags" below — so a standalone invocation must pass all of them explicitly; check `--help` for the full flag list):
+- `src/train_pipeline.py --save_folder ... --checkpoint_save_folder ... --mode {sft,grpo} [--checkpoint_load_folder ...] [--reward_fn {structured,soft_f1}] --random_seed ... [...all hyperparameter flags...]` — trains and, on completion, uploads the best checkpoint's LoRA adapter to the HF Hub repo `frc00/UniversalMedNER` (default `--checkpoint_repo`) under `path_in_repo=<checkpoint_save_folder>`.
+- `src/test_pipeline.py --metrics_path ... --mode {baseline,sft,grpo} [--sft_checkpoint_folder ...] [--grpo_checkpoint_folder ...] [--temperature ...] [--top_p ...] [--verbose] --random_seed ... [...all hyperparameter flags...]` — downloads the relevant adapter(s) from the Hub, evaluates on the `test` split, writes metrics JSON and a `completions.parquet` (prompt/prediction/ground-truth/reward per sample).
+
+Checkpoints are **not** stored locally beyond transient training checkpoints — the SFT/GRPO adapters live on the HF Hub repo `frc00/UniversalMedNER`, keyed by the `--checkpoint_save_folder` / `--checkpoint_load_folder` names (by convention `<label>_sft` / `<label>_grpo`). `test_pipeline.py` and the GRPO stage of `train_pipeline.py` both `snapshot_download` the needed folder from that repo rather than reading local checkpoint dirs.
+
+## Hyperparameter flags
+
+There is no hyperparameter config file and no shared python module for hyperparameters — `src/run_full_pipeline.sh` is the single source of truth for defaults, as plain shell variables at the top of the script, mirroring the last completed full GRPO run (`data/full_grpo/`, finished 2026-07-07). Every hyperparameter is passed from the shell script to the Python entry points as its own individual `--flag value` argument (never bundled into an array, dict, JSON blob, or namespace object), and each Python entry point declares that flag as its own individual `argparse.add_argument(..., required=True)` call with no python-side default — `train_pipeline.py`/`test_pipeline.py` use `args.<flag>` directly everywhere, with no intermediate config object.
+
+Fields are grouped by stage, matching the old `hyperparam.json`'s sections, just as prefixed CLI flags instead of JSON sections:
+
+- shared (no prefix): `--random_seed --validation_size --test_size --max_entities --target_modules --max_negatives` (`train_pipeline.py` only; `test_pipeline.py` only needs `--random_seed --validation_size --test_size --max_entities`, since target-module selection and negative-entity sampling are training-only concepts)
+- sft (`train_pipeline.py` only): `--sft_learning_rate --sft_lora_rank --sft_batch_size --sft_gradient_accumulation_steps --sft_num_epochs --sft_max_train_samples --sft_max_validation_samples`
+- grpo (`train_pipeline.py` always; `test_pipeline.py` only needs `--grpo_max_completion_length`): `--grpo_learning_rate --grpo_lora_rank --grpo_batch_size --grpo_gradient_accumulation_steps --grpo_num_generations --grpo_max_completion_length --grpo_num_epochs --grpo_max_train_samples --grpo_max_validation_samples --grpo_beta --grpo_temperature`
+- test (`test_pipeline.py` only): `--test_batch_size --max_test_samples`
+
+The `sft_`/`grpo_`/`test_` prefixes exist because fields like `learning_rate`, `lora_rank`, and `batch_size` need independently-overridable defaults per stage — a single unprefixed flag can't carry two different defaults at once. `test_pipeline.py` always uses `--grpo_max_completion_length` regardless of `--mode`, so generation length (and therefore truncation behavior) is comparable across baseline/SFT/GRPO testing. `train_pipeline.py` always requires the full sft+grpo flag surface regardless of `--mode`, since argparse validates required flags before `--mode` is inspected.
+
+`--*_max_train_samples`, `--*_max_validation_samples`, `--max_test_samples`, and `--max_negatives` are the only hyperparameters without `required=True` (they default to `None`, meaning "no limit"/"unset"); `run_full_pipeline.sh` only forwards these flags when its corresponding shell variable is non-empty, since passing an empty string would fail `int()`/`float()` conversion in argparse.
+
+`run_full_pipeline.sh` explicitly whitelists every hyperparameter flag name as its own `--flag=value` bash `case` pattern, setting a same-named shell variable — keep that list (and the per-step invocations that consume those variables) in sync when adding/removing a hyperparameter, since an unrecognized flag is a hard error there rather than a silent passthrough.
+
+`--target_modules` selects between two LoRA target-module presets defined in `train_pipeline.py`: `"attention_only"` (`q/k/v/o_proj`) and `"all_linear"` (adds `gate/up/down_proj`).
+
+## Module structure (`src/`)
+
+- **`dataset_code.py`** — turns the IOB-tagged Pile-NER dataset into the training format. Core transform is `format_sft`: for each sample, detokenize the IOB tokens, extract entity→span-list dicts (`extract_entity_spans`), sample a random subset of positive entity types (present in the sample) plus negative types (sampled by inverse frequency via `sample_negatives`, weighted by `get_entity_array_and_weights`), and build a 3-turn chat (system instructions + user text/entity-labels + assistant JSON) used as the SFT target. `create_grpo_ds` reuses `create_sft_ds` and just splits the last turn off into a separate `answer` column (GRPO needs `prompt` + `answer`, not a full target completion). `get_split_ds` does a two-stage `train_test_split` to get train/validation/test. `compute_negative_stats` reports positive/negative label balance for a formatted dataset — useful for sanity-checking data before an expensive training run.
+- **`train_code.py`** — `execute_sft` and `execute_grpo` wrap `trl.SFTTrainer` / `trl.GRPOTrainer` with LoRA (`peft.LoraConfig`) and this repo's specific config (bf16, gradient checkpointing, wandb reporting, save/eval strategy). `collate_fn` (SFT only) builds labels by masking everything before the `<start_of_turn>model` marker with `-100`, so only the assistant's JSON reply contributes to the loss. GRPO's `eos_token_id` is derived from the processor at call time (not hardcoded) so it stays correct if the base model changes — this pattern is repeated in `eval_code.py` and `train_pipeline.py`; don't reintroduce a hardcoded EOS id.
+- **`eval_code.py`** — inference + metrics + GRPO reward functions, the largest module.
+  - Inference: `run_batched_inference` applies the chat template, generates (greedy by default; pass `temperature`/`top_p` to switch to sampling), and returns cleaned responses plus a per-sample `truncated` flag (mirrors TRL's own `clipped_ratio` truncation definition). `clean_prediction` strips markdown fences and chat-template turn markers from raw model output.
+  - Metrics: two F1 modes, `"soft"` (token-set IoU, partial credit) and `"strict"` (exact match). `compute_entity_counts` solves an optimal assignment (`scipy.optimize.linear_sum_assignment`) between GT and predicted spans per entity type in soft mode; strict mode short-circuits to a multiset intersection since exact-match scores are binary/transitive. `compute_sample_counts` handles malformed JSON gracefully (returns a `json_error_flag` rather than raising) and matches entity-type keys case-insensitively (`lower_keys`). `evaluate_dataset` is the main entry point test_pipeline.py calls; it accumulates corpus-level (micro) F1 alongside per-sample-mean (macro) reward metrics, and optionally writes a completions parquet.
+  - Reward functions (used by GRPO training, and also computed at test time for diagnostics via `compute_sample_rewards`): two independent reward schemes selectable via `--reward_fn`.
+    - `"soft_f1"` (`soft_f1_reward_fn`) — just the soft-F1 score per sample.
+    - `"structured"` (default; see `inspiration/reward_function_pseudocode.md` for the original design doc) — a level-based reward with early-exit gating: Level 1 rewards valid `Dict[str, List[str]]` JSON; Level 2 rewards correct entity-type keys (any wrong key or missing key caps the reward there); Level 3 scores extraction quality per entity type (exact-match precision/recall-style scoring via `_compute_extraction_score`, clipped so a correctly-formatted-but-imperfect answer always beats malformed output). This is implemented as **one reward function per level** (`structured_format_reward_fn`, `structured_key_matching_reward_fn`, `structured_extraction_quality_positive_reward_fn`, `structured_extraction_quality_negative_reward_fn`) so TRL logs each component separately to wandb; `REWARD_FUNCTIONS["structured"]` is the list GRPOTrainer actually receives, and their sum reproduces the original monolithic reward exactly. When changing reward logic, keep `compute_structured_reward_components` (the shared implementation) and the per-level wrapper functions in sync — the wrappers must stay thin pass-throughs.
+- **`train_pipeline.py`** / **`test_pipeline.py`** — CLI entry points described above; each declares its own hyperparameter flags directly (see "Hyperparameter flags" above). Both fail fast if a loaded/merged model's `generation_config.eos_token_id` doesn't cover both the tokenizer EOS and `<end_of_turn>`, since merging a LoRA adapter can silently drop it and generation would otherwise run to `max_new_tokens` instead of stopping at the turn boundary — a known TRL/PEFT footgun. Preserve this check if you touch model-loading code.
+
+`inspiration/` holds reference/prior-art material (an external GRPO gist, the reward function design doc) — not part of the runnable pipeline.
+
+## Conventions worth knowing before editing
+
+- Entity-type keys and span text are matched **case-insensitively** everywhere (`lower_keys`, `.lower()` in extraction scoring) — this is deliberate, not an oversight; keep new comparison logic consistent with it unless there's a specific reason not to.
+- `data/` is git-ignored except `grid_search/`, `test_baseline/`, and `test_sft/` (see `.gitignore`) — everything else under `data/` (run outputs, caches) is local/ephemeral and won't be visible via git history. Note `grid_search/`, `test_baseline/`, and `test_sft/` predate the current hyperparameter flags (they contain flat, non-nested legacy `hyperparam.json` files from an older pipeline version) and are not wired up to anything runnable today.
+- Model checkpoints are the source of truth on the HF Hub (`frc00/UniversalMedNER`), not in the local filesystem — don't assume a checkpoint referenced in a hyperparam file or script exists locally.
