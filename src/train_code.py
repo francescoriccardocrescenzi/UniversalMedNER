@@ -58,6 +58,9 @@ def execute_sft(
     batch_size,
     gradient_accumulation_steps,
     num_epochs,
+    save_steps=200,
+    eval_steps=200,
+    max_steps=-1,
 ):
     """Set up and execut supervised fine tuning on the MedGemma."""
     # Prepare datasets
@@ -74,18 +77,19 @@ def execute_sft(
     )
     sft_config = trl.SFTConfig(
         output_dir=str(save_folder),
-        
+
         # --- HUGGING FACE ---
         push_to_hub=False,
-        
+
         # --- CHECKPOINTING ---
         save_strategy="steps",
-        save_steps=200,
+        save_steps=save_steps,
         save_total_limit=2,
+        max_steps=max_steps,
 
         # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
-        eval_steps=200,
+        eval_steps=eval_steps,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
@@ -144,6 +148,8 @@ def execute_grpo(
     beta,
     temperature,
     reward_fn="structured",
+    eval_steps=50,
+    max_steps=-1,
 ):
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples else ds["train"]
@@ -174,10 +180,11 @@ def execute_grpo(
         # --- CHECKPOINTING ---
         save_strategy="best",
         save_total_limit=2,
-        
+        max_steps=max_steps,
+
         # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
-        eval_steps=50,
+        eval_steps=eval_steps,
         per_device_eval_batch_size=batch_size,
         logging_steps=1,
         load_best_model_at_end=True,

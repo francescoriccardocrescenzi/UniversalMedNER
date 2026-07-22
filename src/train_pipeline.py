@@ -53,6 +53,15 @@ def parse_args():
     parser.add_argument("--max_entities", type=int, required=True)
     parser.add_argument("--target_modules", type=str, choices=["attention_only", "all_linear"], required=True)
     parser.add_argument("--max_negatives", type=int, default=None)
+    parser.add_argument(
+        "--max_raw_samples",
+        type=int,
+        default=None,
+        help="If set, subset the raw dataset to this many rows immediately after "
+             "download, before dataset formatting/splitting. Lets a run skip "
+             "mapping over the full dataset when only a handful of samples are "
+             "actually going to be used (e.g. --sft_max_train_samples).",
+    )
 
     parser.add_argument("--sft_learning_rate", type=float, required=True)
     parser.add_argument("--sft_lora_rank", type=int, required=True)
@@ -61,6 +70,15 @@ def parse_args():
     parser.add_argument("--sft_num_epochs", type=int, required=True)
     parser.add_argument("--sft_max_train_samples", type=int, default=None)
     parser.add_argument("--sft_max_validation_samples", type=int, default=None)
+    parser.add_argument("--sft_save_steps", type=int, required=True)
+    parser.add_argument("--sft_eval_steps", type=int, required=True)
+    parser.add_argument(
+        "--sft_max_steps",
+        type=int,
+        required=True,
+        help="Cap on optimizer steps, overriding --sft_num_epochs once reached. "
+             "-1 disables the cap, matching TRL's own default.",
+    )
 
     parser.add_argument("--grpo_learning_rate", type=float, required=True)
     parser.add_argument("--grpo_lora_rank", type=int, required=True)
@@ -73,6 +91,14 @@ def parse_args():
     parser.add_argument("--grpo_max_validation_samples", type=int, default=None)
     parser.add_argument("--grpo_beta", type=float, required=True)
     parser.add_argument("--grpo_temperature", type=float, required=True)
+    parser.add_argument("--grpo_eval_steps", type=int, required=True)
+    parser.add_argument(
+        "--grpo_max_steps",
+        type=int,
+        required=True,
+        help="Cap on optimizer steps, overriding --grpo_num_epochs once reached. "
+             "-1 disables the cap, matching TRL's own default.",
+    )
 
     return parser.parse_args()
 
@@ -85,9 +111,12 @@ if __name__ == "__main__":
 
     print("[INFO] Preparing dataset...")
     detok = sacremoses.MosesDetokenizer(lang="en")
+    raw_ds = datasets.load_dataset(args.dataset_repo)
+    if args.max_raw_samples:
+        raw_ds["train"] = raw_ds["train"].select(range(args.max_raw_samples))
     create_ds_fn = dc.create_sft_ds if args.mode == "sft" else dc.create_grpo_ds
     pile_ds = create_ds_fn(
-        ds=datasets.load_dataset(args.dataset_repo),
+        ds=raw_ds,
         max_entities=args.max_entities,
         detok=detok,
         random_seed=args.random_seed,
@@ -159,6 +188,9 @@ if __name__ == "__main__":
             batch_size=args.sft_batch_size,
             gradient_accumulation_steps=args.sft_gradient_accumulation_steps,
             num_epochs=args.sft_num_epochs,
+            save_steps=args.sft_save_steps,
+            eval_steps=args.sft_eval_steps,
+            max_steps=args.sft_max_steps,
         )
     else:
         trainer = trc.execute_grpo(
@@ -179,6 +211,8 @@ if __name__ == "__main__":
             beta=args.grpo_beta,
             temperature=args.grpo_temperature,
             reward_fn=args.reward_fn,
+            eval_steps=args.grpo_eval_steps,
+            max_steps=args.grpo_max_steps,
         )
     print("[OK] Training complete")
 

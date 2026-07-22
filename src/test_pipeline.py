@@ -70,6 +70,15 @@ def parse_args():
     parser.add_argument("--test_batch_size", type=int, required=True)
     parser.add_argument("--max_test_samples", type=int, default=None)
     parser.add_argument(
+        "--max_raw_samples",
+        type=int,
+        default=None,
+        help="If set, subset the raw dataset to this many rows immediately after "
+             "download, before dataset formatting/splitting. Lets a run skip "
+             "mapping over the full dataset when only a handful of samples are "
+             "actually going to be used (e.g. --max_test_samples).",
+    )
+    parser.add_argument(
         "--grpo_max_completion_length",
         type=int,
         required=True,
@@ -108,8 +117,11 @@ if __name__ == "__main__":
 
     print('[INFO] Preparing dataset...')
     detok = sacremoses.MosesDetokenizer(lang="en")
+    raw_ds = datasets.load_dataset(args.dataset_repo)
+    if args.max_raw_samples:
+        raw_ds["train"] = raw_ds["train"].select(range(args.max_raw_samples))
     pile_ds = dc.create_sft_ds(
-        ds=datasets.load_dataset(args.dataset_repo),
+        ds=raw_ds,
         max_entities=args.max_entities,
         detok=detok,
         random_seed=args.random_seed
