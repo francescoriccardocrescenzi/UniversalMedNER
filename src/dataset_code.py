@@ -1,6 +1,6 @@
 """Dataset preparation functions.
 
-This module contains functions to prepare the dataset for 
+This module contains functions to prepare the dataset for
 supervised fine-tuning (SFT) of MedGemma on the NER task.
 """
 
@@ -15,11 +15,7 @@ import datasets
 
 # --- DATASET PREPARATION FUNCTIONS ---
 
-def get_merged_ds(ds):
-    "Returne dataset obtained by merging all splits."
-    return datasets.concatenate_datasets([ds[split] for split in ds.keys()])
-
-def get_split_ds(ds, validation_size, test_size, random_seed):
+def get_split_ner_ds(ds, validation_size, test_size, random_seed):
     """Split dataset into train / validation / test."""
 
     # First split: train+val vs test
@@ -40,7 +36,7 @@ def get_split_ds(ds, validation_size, test_size, random_seed):
         'test': split_1['test']
     })
 
-def get_entity_array_and_weights(ds):
+def get_ner_entity_array_and_weights(ds):
     """Extract all unique entities and their inverse frequencies for negative sampling."""
     entity_list = []
 
@@ -60,15 +56,15 @@ def get_entity_array_and_weights(ds):
 
     return entity_array, entity_weights
 
-def sample_negatives(n_neg, entity_array, entity_weights):
+def sample_ner_negatives(n_neg, entity_array, entity_weights):
     """Sample negative entities."""
     return np.random.choice(entity_array, size=n_neg, p=entity_weights)
 
-def sample_positives(n_pos, entities):
+def sample_ner_positives(n_pos, entities):
     """Sample positive entities."""
     return np.random.choice(list(entities.keys()), size=n_pos, replace=False)
 
-def extract_entity_spans(tokens, tags):
+def extract_ner_entity_spans(tokens, tags):
     """Convert list of tokens and list of tag into entity -> entity_span_list dict."""
     entity_spans = defaultdict(list)
     current_span = []
@@ -95,13 +91,13 @@ def extract_entity_spans(tokens, tags):
 
     return entity_spans
 
-def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, base_seed, max_negatives=None):
+def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_negatives=-1):
     """Create SFT sample from IOB sample.
 
     Uniformly sample some of the entities present in the current sample
     and use them and the associated spans as positives.
     Then sample negative entities using inverse frequencies as weights,
-    capped at `max_negatives` (uncapped if `max_negatives` is None).
+    capped at `max_negatives` (uncapped if `max_negatives` is -1).
     Create a conversation snippet with:
         - a system prompt instructing the model to think silently
         - a user prompt describing the NER task and passing the text and the entities
@@ -119,13 +115,13 @@ def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, bas
 
     text = detok.detokenize(tokens)
 
-    entity_spans = extract_entity_spans(tokens, tags)
+    entity_spans = extract_ner_entity_spans(tokens, tags)
 
     n_pos = min(len(entity_spans), np.random.randint(1, n_entities + 1))
-    n_neg = n_entities - n_pos if max_negatives is None else min(n_entities - n_pos, max_negatives)
+    n_neg = n_entities - n_pos if max_negatives == -1 else min(n_entities - n_pos, max_negatives)
 
-    positives = sample_positives(n_pos, entity_spans)
-    negatives = sample_negatives(n_neg, entity_array, entity_weights)
+    positives = sample_ner_positives(n_pos, entity_spans)
+    negatives = sample_ner_negatives(n_neg, entity_array, entity_weights)
 
     sampled_entities = set(positives) | set(negatives)
 
@@ -172,37 +168,33 @@ def format_sft(sample, idx, n_entities, entity_array, entity_weights, detok, bas
                 )
             },
             {
-                "role": "assistant", 
+                "role": "assistant",
                 "content": ner_json
             }
         ]
     }
 
-def create_sft_ds(ds, max_entities, detok, random_seed, max_negatives=None):
+def create_ner_sft_ds(ds, max_entities, detok, max_negatives=-1):
     """Convert a whole IOB format NER dataset into an SFT format dataset.
 
-    Apply `format_sft` to each sample.
+    Apply `format_ner_sft` to each sample.
     """
-    entity_array, entity_weights = get_entity_array_and_weights(ds)
-    base_seed = random_seed
+    entity_array, entity_weights = get_ner_entity_array_and_weights(ds)
 
     return ds.map(
-        lambda sample, idx: format_sft(
+        lambda sample: format_ner_sft(
             sample,
-            idx,
             np.random.randint(1, max_entities + 1),
             entity_array,
             entity_weights,
             detok,
-            base_seed,
             max_negatives
         ),
-        with_indices=True,
         remove_columns=["tokens", "ner_tags"]
     )
 
-def create_grpo_ds(ds, max_entities, detok, random_seed, max_negatives=None):
-    sft_ds = create_sft_ds(ds, max_entities, detok, random_seed, max_negatives)
+def create_ner_grpo_ds(ds, max_entities, detok, max_negatives=-1):
+    sft_ds = create_ner_sft_ds(ds, max_entities, detok, max_negatives)
     return sft_ds.map(
         lambda sample: {
             "prompt": sample["messages"][:-1],
@@ -211,7 +203,7 @@ def create_grpo_ds(ds, max_entities, detok, random_seed, max_negatives=None):
         remove_columns=["messages"]
     )
 
-def compute_negative_stats(ds):
+def compute_ner_negative_stats(ds):
     """Compute per-sample positive/negative entity-label statistics for a formatted dataset.
 
     Works on both SFT-formatted samples ("messages", assistant turn holds the

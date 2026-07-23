@@ -1,6 +1,5 @@
 # --- IMPORTS ---
 
-import torch
 import peft
 import trl
 
@@ -8,7 +7,7 @@ import eval_code as ec
 
 # MODEL FINE TUNE CODE
 
-def collate_fn(samples, processor):
+def ner_collate_fn(samples, processor):
     """Preprocess and collate batch of samples.
     
     This function is responsible for applying chat templates, tokenizing the prompts,
@@ -45,7 +44,7 @@ def collate_fn(samples, processor):
     batch["labels"] = labels
     return batch
 
-def execute_sft(
+def execute_ner_sft(
     model,
     processor,
     ds,
@@ -62,10 +61,13 @@ def execute_sft(
     eval_steps=200,
     max_steps=-1,
 ):
-    """Set up and execut supervised fine tuning on the MedGemma."""
+    """Set up and execut supervised fine tuning on the MedGemma.
+
+    max_train_samples/max_validation_samples: -1 means "no limit".
+    """
     # Prepare datasets
-    train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples else ds["train"]
-    eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples else ds["validation"]
+    train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples != -1 else ds["train"]
+    eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples != -1 else ds["validation"]
 
     # Prepare configs
     peft_config = peft.LoraConfig(
@@ -123,14 +125,14 @@ def execute_sft(
         eval_dataset=eval_dataset,
         peft_config=peft_config,
         processing_class=processor,
-        data_collator=lambda samples: collate_fn(samples, processor),
+        data_collator=lambda samples: ner_collate_fn(samples, processor),
     )
 
     # Train
     sft_trainer.train()
     return sft_trainer
  
-def execute_grpo(
+def execute_ner_grpo(
     model,
     processor,
     ds,
@@ -151,9 +153,10 @@ def execute_grpo(
     eval_steps=50,
     max_steps=-1,
 ):
+    """max_train_samples/max_validation_samples: -1 means "no limit"."""
     # Prepare datasets
-    train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples else ds["train"]
-    eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples else ds["validation"]
+    train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples != -1 else ds["train"]
+    eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples != -1 else ds["validation"]
 
     # Prepare configs
     peft_config = peft.LoraConfig(
@@ -221,7 +224,7 @@ def execute_grpo(
     # Initialize trainer
     grpo_trainer = trl.GRPOTrainer(
         model=model,
-        reward_funcs=ec.REWARD_FUNCTIONS[reward_fn],
+        reward_funcs=ec.NER_REWARD_FUNCTIONS[reward_fn],
         args=grpo_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
