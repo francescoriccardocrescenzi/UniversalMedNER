@@ -1,7 +1,11 @@
 """Dataset preparation functions.
 
-This module contains functions to prepare the dataset for
-supervised fine-tuning (SFT) of MedGemma on the NER task.
+This module prepares the shared IOB-tagged Pile-NER dataset for both tasks:
+NER (given the text and a candidate list of entity types, extract matching
+spans) and labelling/lbl (given only the text, find and type every entity
+present). Functions with no task-specific logic (dataset splitting, IOB span
+extraction, the SFT->GRPO prompt/answer split) are shared; everything else
+comes in an `_ner_`/`_lbl_` pair.
 """
 
 # --- IMPORTS ---
@@ -13,9 +17,9 @@ import numpy as np
 import datasets
 
 
-# --- DATASET PREPARATION FUNCTIONS ---
+# --- SHARED DATASET HELPERS ---
 
-def get_split_ner_ds(ds, validation_size, test_size, random_seed):
+def get_split_ds(ds, validation_size, test_size, random_seed):
     """Split dataset into train / validation / test."""
 
     # First split: train+val vs test
@@ -35,6 +39,92 @@ def get_split_ner_ds(ds, validation_size, test_size, random_seed):
         'validation': split_2['test'],
         'test': split_1['test']
     })
+
+def extract_entity_spans(tokens, tags):
+    """Convert list of tokens and list of tag into entity -> entity_span_list dict."""
+    entity_spans = defaultdict(list)
+    current_span = []
+    current_entity = None
+
+    for token, tag in zip(tokens, tags):
+        if tag.startswith("B-"):
+            if current_span:
+                entity_spans[current_entity].append(" ".join(current_span))
+            current_span = [token]
+            current_entity = tag[2:]
+
+        elif tag.startswith("I-") and current_entity:
+            current_span.append(token)
+
+        else:
+            if current_span:
+                entity_spans[current_entity].append(" ".join(current_span))
+            current_span = []
+            current_entity = None
+
+    if current_span:
+        entity_spans[current_entity].append(" ".join(current_span))
+
+    return entity_spans
+
+def to_grpo_ds(sft_ds):
+    """Split an SFT-formatted dataset's last (assistant) turn into a separate
+    `answer` column, dropping `messages` in favor of `prompt` + `answer`
+    (GRPO needs a prompt to generate from and a target to reward against, not
+    a full target completion)."""
+    return sft_ds.map(
+        lambda sample: {
+            "prompt": sample["messages"][:-1],
+            "answer": sample["messages"][-1]["content"]
+        },
+        remove_columns=["messages"]
+    )
+
+def compute_negative_stats(ds):
+    """Compute per-sample positive/negative entity-label statistics for a formatted dataset.
+
+    Works on both SFT-formatted samples ("messages", assistant turn holds the
+    entity json) and GRPO-formatted samples ("answer" holds the entity json).
+    For the labelling task every included label is by construction positive
+    (there's no candidate list to probe negatively against), so this will
+    report a 0% negative rate there -- still a harmless sanity check that the
+    data-prep pipeline produced the expected shape.
+    """
+    n_pos_total = 0
+    n_neg_total = 0
+    n_all_positive = 0
+    n_all_negative = 0
+
+    for sample in ds:
+        if "answer" in sample:
+            entity_json = sample["answer"]
+        else:
+            entity_json = sample["messages"][-1]["content"]
+
+        entities = json.loads(entity_json)
+        n_pos = sum(1 for spans in entities.values() if len(spans) > 0)
+        n_neg = len(entities) - n_pos
+
+        n_pos_total += n_pos
+        n_neg_total += n_neg
+        n_all_positive += int(n_neg == 0)
+        n_all_negative += int(n_pos == 0)
+
+    n_samples = len(ds)
+    n_labels_total = n_pos_total + n_neg_total
+
+    return {
+        "n_samples": n_samples,
+        "mean_labels_per_sample": n_labels_total / n_samples,
+        "mean_positive_per_sample": n_pos_total / n_samples,
+        "mean_negative_per_sample": n_neg_total / n_samples,
+        "negative_label_rate": n_neg_total / n_labels_total if n_labels_total else 0.0,
+        "pct_samples_all_positive": n_all_positive / n_samples,
+        "pct_samples_all_negative": n_all_negative / n_samples,
+    }
+
+
+# --- NER (directed extraction: candidate entity types are given up front) ---
 
 def get_ner_entity_array_and_weights(ds):
     """Extract all unique entities and their inverse frequencies for negative sampling."""
@@ -64,33 +154,6 @@ def sample_ner_positives(n_pos, entities):
     """Sample positive entities."""
     return np.random.choice(list(entities.keys()), size=n_pos, replace=False)
 
-def extract_ner_entity_spans(tokens, tags):
-    """Convert list of tokens and list of tag into entity -> entity_span_list dict."""
-    entity_spans = defaultdict(list)
-    current_span = []
-    current_entity = None
-
-    for token, tag in zip(tokens, tags):
-        if tag.startswith("B-"):
-            if current_span:
-                entity_spans[current_entity].append(" ".join(current_span))
-            current_span = [token]
-            current_entity = tag[2:]
-
-        elif tag.startswith("I-") and current_entity:
-            current_span.append(token)
-
-        else:
-            if current_span:
-                entity_spans[current_entity].append(" ".join(current_span))
-            current_span = []
-            current_entity = None
-
-    if current_span:
-        entity_spans[current_entity].append(" ".join(current_span))
-
-    return entity_spans
-
 def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_negatives=-1):
     """Create SFT sample from IOB sample.
 
@@ -115,7 +178,7 @@ def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_
 
     text = detok.detokenize(tokens)
 
-    entity_spans = extract_ner_entity_spans(tokens, tags)
+    entity_spans = extract_entity_spans(tokens, tags)
 
     n_pos = min(len(entity_spans), np.random.randint(1, n_entities + 1))
     n_neg = n_entities - n_pos if max_negatives == -1 else min(n_entities - n_pos, max_negatives)
@@ -194,50 +257,82 @@ def create_ner_sft_ds(ds, max_entities, detok, max_negatives=-1):
     )
 
 def create_ner_grpo_ds(ds, max_entities, detok, max_negatives=-1):
-    sft_ds = create_ner_sft_ds(ds, max_entities, detok, max_negatives)
-    return sft_ds.map(
-        lambda sample: {
-            "prompt": sample["messages"][:-1],
-            "answer": sample["messages"][-1]["content"]
-        },
-        remove_columns=["messages"]
-    )
+    return to_grpo_ds(create_ner_sft_ds(ds, max_entities, detok, max_negatives))
 
-def compute_ner_negative_stats(ds):
-    """Compute per-sample positive/negative entity-label statistics for a formatted dataset.
 
-    Works on both SFT-formatted samples ("messages", assistant turn holds the
-    ner json) and GRPO-formatted samples ("answer" holds the ner json).
+# --- Labelling (open-set discovery: no candidate list, model finds+types everything) ---
+
+def format_lbl_sft(sample, detok):
+    """Create SFT sample from IOB sample, for the open-set labelling task.
+
+    Unlike `format_ner_sft`, there is no candidate entity list to sample
+    positives/negatives from: every entity type present in the sample is
+    included in the target as-is, and the model is not shown any labels up
+    front -- it must both find and type every entity itself.
     """
-    n_pos_total = 0
-    n_neg_total = 0
-    n_all_positive = 0
-    n_all_negative = 0
+    tokens = sample['tokens']
+    tags = sample['ner_tags']
 
-    for sample in ds:
-        if "answer" in sample:
-            ner_json = sample["answer"]
-        else:
-            ner_json = sample["messages"][-1]["content"]
+    if isinstance(tokens, str):
+        tokens = eval(tokens)
+    if isinstance(tags, str):
+        tags = eval(tags)
 
-        entities = json.loads(ner_json)
-        n_pos = sum(1 for spans in entities.values() if len(spans) > 0)
-        n_neg = len(entities) - n_pos
+    text = detok.detokenize(tokens)
 
-        n_pos_total += n_pos
-        n_neg_total += n_neg
-        n_all_positive += int(n_neg == 0)
-        n_all_negative += int(n_pos == 0)
+    entity_spans = extract_entity_spans(tokens, tags)
 
-    n_samples = len(ds)
-    n_labels_total = n_pos_total + n_neg_total
+    assistant_output = {
+        entity.upper(): spans
+        for entity, spans in entity_spans.items()
+    }
+
+    entity_json = json.dumps(assistant_output)
 
     return {
-        "n_samples": n_samples,
-        "mean_labels_per_sample": n_labels_total / n_samples,
-        "mean_positive_per_sample": n_pos_total / n_samples,
-        "mean_negative_per_sample": n_neg_total / n_samples,
-        "negative_label_rate": n_neg_total / n_labels_total if n_labels_total else 0.0,
-        "pct_samples_all_positive": n_all_positive / n_samples,
-        "pct_samples_all_negative": n_all_negative / n_samples,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Named Entity Recognition system.\n\n"
+                    "Objective:\n"
+                    "Identify all named entities present in the provided input text and extract their exact text spans.\n\n"
+                    "Strict rules:\n"
+                    "- Only extract substrings that appear verbatim in the text.\n"
+                    "- Do NOT infer, generalize, or paraphrase.\n"
+                    "- Do NOT use semantic matching or external knowledge.\n"
+                    "- Do NOT hallucinate entities not explicitly present in the text.\n"
+                    "- Matching is case-sensitive and character-exact.\n"
+                    "- Choose a concise, descriptive label for each entity type you find.\n"
+                    "- Output MUST be valid JSON only (no markdown, no explanations)."
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Text:\n"
+                    f"{text}\n\n"
+                    "Return a JSON object where:\n"
+                    "- keys are entity type labels you identify\n"
+                    "- values are lists of exact substrings taken directly from the text for that entity type\n"
+                    "- group all spans of the same entity type under one key\n"
+                    "- if no entities are found, return {}"
+                )
+            },
+            {
+                "role": "assistant",
+                "content": entity_json
+            }
+        ]
     }
+
+def create_lbl_sft_ds(ds, detok):
+    """Convert a whole IOB format dataset into an SFT format dataset for the
+    labelling task. Apply `format_lbl_sft` to each sample."""
+    return ds.map(
+        lambda sample: format_lbl_sft(sample, detok),
+        remove_columns=["tokens", "ner_tags"]
+    )
+
+def create_lbl_grpo_ds(ds, detok):
+    return to_grpo_ds(create_lbl_sft_ds(ds, detok))

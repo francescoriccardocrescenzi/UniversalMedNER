@@ -13,13 +13,14 @@ PROFILE=standard
 
 MODEL_REPO=google/medgemma-1.5-4b-it
 
-NER_RANDOM_SEED=42
-NER_VALIDATION_SIZE=0.02
-NER_TEST_SIZE=0.05
+RANDOM_SEED=42
+VALIDATION_SIZE=0.02
+TEST_SIZE=0.05
+TARGET_MODULES=all_linear
+MAX_RAW_SAMPLES=-1
+
 NER_MAX_ENTITIES=6
-NER_TARGET_MODULES=all_linear
 NER_MAX_NEGATIVES=-1
-NER_MAX_RAW_SAMPLES=-1
 
 NER_SFT_LEARNING_RATE=2e-4
 NER_SFT_LORA_RANK=16
@@ -59,13 +60,14 @@ for arg in "$@"; do
 
     --model_repo=*) MODEL_REPO="${arg#*=}" ;;
 
-    --ner_random_seed=*) NER_RANDOM_SEED="${arg#*=}" ;;
-    --ner_validation_size=*) NER_VALIDATION_SIZE="${arg#*=}" ;;
-    --ner_test_size=*) NER_TEST_SIZE="${arg#*=}" ;;
+    --random_seed=*) RANDOM_SEED="${arg#*=}" ;;
+    --validation_size=*) VALIDATION_SIZE="${arg#*=}" ;;
+    --test_size=*) TEST_SIZE="${arg#*=}" ;;
+    --target_modules=*) TARGET_MODULES="${arg#*=}" ;;
+    --max_raw_samples=*) MAX_RAW_SAMPLES="${arg#*=}" ;;
+
     --ner_max_entities=*) NER_MAX_ENTITIES="${arg#*=}" ;;
-    --ner_target_modules=*) NER_TARGET_MODULES="${arg#*=}" ;;
     --ner_max_negatives=*) NER_MAX_NEGATIVES="${arg#*=}" ;;
-    --ner_max_raw_samples=*) NER_MAX_RAW_SAMPLES="${arg#*=}" ;;
 
     --ner_sft_learning_rate=*) NER_SFT_LEARNING_RATE="${arg#*=}" ;;
     --ner_sft_lora_rank=*) NER_SFT_LORA_RANK="${arg#*=}" ;;
@@ -103,12 +105,12 @@ for arg in "$@"; do
 done
 
 if [[ -z "$LABEL" ]]; then
-  echo "Usage: $0 --label=RUN_LABEL [-1] [-2] [-3] [-4] [-5] [--profile=standard|smoke] [--ner_random_seed=42] [--ner_sft_learning_rate=2e-4] [--ner_grpo_beta=0.0] ..."
+  echo "Usage: $0 --label=RUN_LABEL [-1] [-2] [-3] [-4] [-5] [--profile=standard|smoke] [--random_seed=42] [--ner_sft_learning_rate=2e-4] [--ner_grpo_beta=0.0] ..."
   exit 1
 fi
 
 # ---------- Smoke-test profile ----------
-# Uses specific argument combination to run a small scale smoke test on local machine
+# Fast end-to-end check on the real model (on the VM), using very little data
 # Does not accept hyperparameter overrides
 
 if [[ "$PROFILE" == "smoke" ]]; then
@@ -122,46 +124,42 @@ if [[ "$PROFILE" == "smoke" ]]; then
     esac
   done
 
-  # NOTE: verify this repo loads via AutoModelForImageTextToText and carries
-  # a Gemma-compatible tokenizer (<end_of_turn> etc.) before relying on this;
-  # swap to a different tiny model repo here if it doesn't.
-  MODEL_REPO=hf-internal-testing/tiny-random-Gemma3ForConditionalGeneration
+  RANDOM_SEED=42
+  VALIDATION_SIZE=0.2
+  TEST_SIZE=0.2
+  TARGET_MODULES=all_linear
+  MAX_RAW_SAMPLES=200
 
-  NER_RANDOM_SEED=42
-  NER_VALIDATION_SIZE=0.2
-  NER_TEST_SIZE=0.2
   NER_MAX_ENTITIES=6
-  NER_TARGET_MODULES=all_linear
   NER_MAX_NEGATIVES=-1
-  NER_MAX_RAW_SAMPLES=40
 
   NER_SFT_LEARNING_RATE=2e-4
-  NER_SFT_LORA_RANK=4
-  NER_SFT_BATCH_SIZE=2
+  NER_SFT_LORA_RANK=16
+  NER_SFT_BATCH_SIZE=16
   NER_SFT_GRADIENT_ACCUMULATION_STEPS=1
   NER_SFT_NUM_EPOCHS=1
-  NER_SFT_MAX_TRAIN_SAMPLES=8
-  NER_SFT_MAX_VALIDATION_SAMPLES=4
+  NER_SFT_MAX_TRAIN_SAMPLES=-1
+  NER_SFT_MAX_VALIDATION_SAMPLES=24
   NER_SFT_SAVE_STEPS=1
   NER_SFT_EVAL_STEPS=1
   NER_SFT_MAX_STEPS=2
 
   NER_GRPO_LEARNING_RATE=5e-7
-  NER_GRPO_LORA_RANK=4
-  NER_GRPO_BATCH_SIZE=2
+  NER_GRPO_LORA_RANK=16
+  NER_GRPO_BATCH_SIZE=24
   NER_GRPO_GRADIENT_ACCUMULATION_STEPS=1
-  NER_GRPO_NUM_GENERATIONS=2
-  NER_GRPO_MAX_COMPLETION_LENGTH=16
+  NER_GRPO_NUM_GENERATIONS=8
+  NER_GRPO_MAX_COMPLETION_LENGTH=128
   NER_GRPO_NUM_EPOCHS=1
-  NER_GRPO_MAX_TRAIN_SAMPLES=8
-  NER_GRPO_MAX_VALIDATION_SAMPLES=4
+  NER_GRPO_MAX_TRAIN_SAMPLES=-1
+  NER_GRPO_MAX_VALIDATION_SAMPLES=24
   NER_GRPO_BETA=0.0
   NER_GRPO_TEMPERATURE=1.0
   NER_GRPO_EVAL_STEPS=1
   NER_GRPO_MAX_STEPS=2
 
-  NER_TEST_BATCH_SIZE=2
-  NER_MAX_TEST_SAMPLES=4
+  NER_TEST_BATCH_SIZE=16
+  NER_MAX_TEST_SAMPLES=16
 
   export WANDB_MODE=disabled
 elif [[ "$PROFILE" != "standard" ]]; then
@@ -202,16 +200,17 @@ if run_step 1; then
   python src/test_pipeline.py \
     --metrics_path "$RUN_FOLDER/baseline_metrics.json" \
     --model_repo "$MODEL_REPO" \
-    --ner_mode baseline \
+    --task ner \
+    --mode baseline \
     --verbose \
-    --ner_random_seed "$NER_RANDOM_SEED" \
-    --ner_validation_size "$NER_VALIDATION_SIZE" \
-    --ner_test_size "$NER_TEST_SIZE" \
+    --random_seed "$RANDOM_SEED" \
+    --validation_size "$VALIDATION_SIZE" \
+    --test_size "$TEST_SIZE" \
     --ner_max_entities "$NER_MAX_ENTITIES" \
     --ner_test_batch_size "$NER_TEST_BATCH_SIZE" \
     --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
     --ner_max_test_samples "$NER_MAX_TEST_SAMPLES" \
-    --ner_max_raw_samples "$NER_MAX_RAW_SAMPLES"
+    --max_raw_samples "$MAX_RAW_SAMPLES"
 fi
 
 if run_step 2; then
@@ -221,12 +220,13 @@ if run_step 2; then
     --save_folder "$RUN_FOLDER/sft_out" \
     --checkpoint_save_folder "$CHECKPOINT_FOLDER_SFT" \
     --model_repo "$MODEL_REPO" \
-    --ner_mode "sft" \
-    --ner_random_seed "$NER_RANDOM_SEED" \
-    --ner_validation_size "$NER_VALIDATION_SIZE" \
-    --ner_test_size "$NER_TEST_SIZE" \
+    --task ner \
+    --mode "sft" \
+    --random_seed "$RANDOM_SEED" \
+    --validation_size "$VALIDATION_SIZE" \
+    --test_size "$TEST_SIZE" \
+    --target_modules "$TARGET_MODULES" \
     --ner_max_entities "$NER_MAX_ENTITIES" \
-    --ner_target_modules "$NER_TARGET_MODULES" \
     --ner_sft_learning_rate "$NER_SFT_LEARNING_RATE" \
     --ner_sft_lora_rank "$NER_SFT_LORA_RANK" \
     --ner_sft_batch_size "$NER_SFT_BATCH_SIZE" \
@@ -247,7 +247,7 @@ if run_step 2; then
     --ner_grpo_eval_steps "$NER_GRPO_EVAL_STEPS" \
     --ner_grpo_max_steps "$NER_GRPO_MAX_STEPS" \
     --ner_max_negatives "$NER_MAX_NEGATIVES" \
-    --ner_max_raw_samples "$NER_MAX_RAW_SAMPLES" \
+    --max_raw_samples "$MAX_RAW_SAMPLES" \
     --ner_sft_max_train_samples "$NER_SFT_MAX_TRAIN_SAMPLES" \
     --ner_sft_max_validation_samples "$NER_SFT_MAX_VALIDATION_SAMPLES" \
     --ner_grpo_max_train_samples "$NER_GRPO_MAX_TRAIN_SAMPLES" \
@@ -259,17 +259,18 @@ if run_step 3; then
   python src/test_pipeline.py \
     --metrics_path "$RUN_FOLDER/sft_metrics.json" \
     --model_repo "$MODEL_REPO" \
-    --ner_mode sft \
+    --task ner \
+    --mode sft \
     --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
     --verbose \
-    --ner_random_seed "$NER_RANDOM_SEED" \
-    --ner_validation_size "$NER_VALIDATION_SIZE" \
-    --ner_test_size "$NER_TEST_SIZE" \
+    --random_seed "$RANDOM_SEED" \
+    --validation_size "$VALIDATION_SIZE" \
+    --test_size "$TEST_SIZE" \
     --ner_max_entities "$NER_MAX_ENTITIES" \
     --ner_test_batch_size "$NER_TEST_BATCH_SIZE" \
     --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
     --ner_max_test_samples "$NER_MAX_TEST_SAMPLES" \
-    --ner_max_raw_samples "$NER_MAX_RAW_SAMPLES"
+    --max_raw_samples "$MAX_RAW_SAMPLES"
 fi
 
 if run_step 4; then
@@ -280,12 +281,13 @@ if run_step 4; then
     --checkpoint_load_folder "$CHECKPOINT_FOLDER_SFT" \
     --checkpoint_save_folder "$CHECKPOINT_FOLDER_GRPO" \
     --model_repo "$MODEL_REPO" \
-    --ner_mode "grpo" \
-    --ner_random_seed "$NER_RANDOM_SEED" \
-    --ner_validation_size "$NER_VALIDATION_SIZE" \
-    --ner_test_size "$NER_TEST_SIZE" \
+    --task ner \
+    --mode "grpo" \
+    --random_seed "$RANDOM_SEED" \
+    --validation_size "$VALIDATION_SIZE" \
+    --test_size "$TEST_SIZE" \
+    --target_modules "$TARGET_MODULES" \
     --ner_max_entities "$NER_MAX_ENTITIES" \
-    --ner_target_modules "$NER_TARGET_MODULES" \
     --ner_sft_learning_rate "$NER_SFT_LEARNING_RATE" \
     --ner_sft_lora_rank "$NER_SFT_LORA_RANK" \
     --ner_sft_batch_size "$NER_SFT_BATCH_SIZE" \
@@ -306,7 +308,7 @@ if run_step 4; then
     --ner_grpo_eval_steps "$NER_GRPO_EVAL_STEPS" \
     --ner_grpo_max_steps "$NER_GRPO_MAX_STEPS" \
     --ner_max_negatives "$NER_MAX_NEGATIVES" \
-    --ner_max_raw_samples "$NER_MAX_RAW_SAMPLES" \
+    --max_raw_samples "$MAX_RAW_SAMPLES" \
     --ner_sft_max_train_samples "$NER_SFT_MAX_TRAIN_SAMPLES" \
     --ner_sft_max_validation_samples "$NER_SFT_MAX_VALIDATION_SAMPLES" \
     --ner_grpo_max_train_samples "$NER_GRPO_MAX_TRAIN_SAMPLES" \
@@ -318,18 +320,19 @@ if run_step 5; then
   python src/test_pipeline.py \
     --metrics_path "$RUN_FOLDER/grpo_metrics.json" \
     --model_repo "$MODEL_REPO" \
-    --ner_mode grpo \
+    --task ner \
+    --mode grpo \
     --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
     --grpo_checkpoint_folder "$CHECKPOINT_FOLDER_GRPO" \
     --verbose \
-    --ner_random_seed "$NER_RANDOM_SEED" \
-    --ner_validation_size "$NER_VALIDATION_SIZE" \
-    --ner_test_size "$NER_TEST_SIZE" \
+    --random_seed "$RANDOM_SEED" \
+    --validation_size "$VALIDATION_SIZE" \
+    --test_size "$TEST_SIZE" \
     --ner_max_entities "$NER_MAX_ENTITIES" \
     --ner_test_batch_size "$NER_TEST_BATCH_SIZE" \
     --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
     --ner_max_test_samples "$NER_MAX_TEST_SAMPLES" \
-    --ner_max_raw_samples "$NER_MAX_RAW_SAMPLES"
+    --max_raw_samples "$MAX_RAW_SAMPLES"
 fi
 
 echo "[DONE]"

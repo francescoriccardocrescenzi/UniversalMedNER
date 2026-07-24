@@ -3,13 +3,11 @@
 import peft
 import trl
 
-import eval_code as ec
-
 # MODEL FINE TUNE CODE
 
-def ner_collate_fn(samples, processor):
+def collate_fn(samples, processor):
     """Preprocess and collate batch of samples.
-    
+
     This function is responsible for applying chat templates, tokenizing the prompts,
     and constructing the labels.
     """
@@ -44,7 +42,7 @@ def ner_collate_fn(samples, processor):
     batch["labels"] = labels
     return batch
 
-def execute_ner_sft(
+def execute_sft(
     model,
     processor,
     ds,
@@ -63,7 +61,8 @@ def execute_ner_sft(
 ):
     """Set up and execut supervised fine tuning on the MedGemma.
 
-    max_train_samples/max_validation_samples: -1 means "no limit".
+    max_train_samples/max_validation_samples: -1 means "no limit". Task-agnostic
+    (SFT training has no task-specific logic) -- used identically by every task.
     """
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples != -1 else ds["train"]
@@ -125,14 +124,14 @@ def execute_ner_sft(
         eval_dataset=eval_dataset,
         peft_config=peft_config,
         processing_class=processor,
-        data_collator=lambda samples: ner_collate_fn(samples, processor),
+        data_collator=lambda samples: collate_fn(samples, processor),
     )
 
     # Train
     sft_trainer.train()
     return sft_trainer
- 
-def execute_ner_grpo(
+
+def execute_grpo(
     model,
     processor,
     ds,
@@ -149,11 +148,17 @@ def execute_ner_grpo(
     num_epochs,
     beta,
     temperature,
-    reward_fn="structured",
+    reward_funcs,
     eval_steps=50,
     max_steps=-1,
 ):
-    """max_train_samples/max_validation_samples: -1 means "no limit"."""
+    """max_train_samples/max_validation_samples: -1 means "no limit".
+
+    Task-agnostic: `reward_funcs` is a list of already-resolved reward
+    functions (e.g. `eval_code.REWARD_FUNCTIONS[reward_fn]`) passed in by the
+    caller, so this function itself doesn't need to know which task -- or
+    which task's reward registry -- it's being used for.
+    """
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples != -1 else ds["train"]
     eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples != -1 else ds["validation"]
@@ -176,10 +181,10 @@ def execute_ner_grpo(
 
     grpo_config = trl.GRPOConfig(
         output_dir=str(save_folder),
-        
+
         # --- HUGGING FACE ---
         push_to_hub=False,
-        
+
         # --- CHECKPOINTING ---
         save_strategy="best",
         save_total_limit=2,
@@ -224,7 +229,7 @@ def execute_ner_grpo(
     # Initialize trainer
     grpo_trainer = trl.GRPOTrainer(
         model=model,
-        reward_funcs=ec.NER_REWARD_FUNCTIONS[reward_fn],
+        reward_funcs=reward_funcs,
         args=grpo_config,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
