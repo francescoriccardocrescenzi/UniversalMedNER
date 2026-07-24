@@ -110,8 +110,6 @@ if [[ -z "$LABEL" ]]; then
 fi
 
 # ---------- Smoke-test profile ----------
-# Fast end-to-end check on the real model (on the VM), using very little data
-# Does not accept hyperparameter overrides
 
 if [[ "$PROFILE" == "smoke" ]]; then
   for arg in "$@"; do
@@ -197,130 +195,125 @@ CHECKPOINT_FOLDER_GRPO="${LABEL}_ner_grpo"
 
 if run_step 1; then
   echo "[STEP 1] TEST BASELINE MODEL"
-  python src/test_pipeline.py \
+  python src/test_ner_pipeline.py \
     --metrics_path "$RUN_FOLDER/baseline_metrics.json" \
     --model_repo "$MODEL_REPO" \
-    --task ner \
     --mode baseline \
     --verbose \
     --random_seed "$RANDOM_SEED" \
     --validation_size "$VALIDATION_SIZE" \
     --test_size "$TEST_SIZE" \
-    --ner_max_entities "$NER_MAX_ENTITIES" \
-    --ner_test_batch_size "$NER_TEST_BATCH_SIZE" \
-    --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
-    --ner_max_test_samples "$NER_MAX_TEST_SAMPLES" \
+    --max_entities "$NER_MAX_ENTITIES" \
+    --test_batch_size "$NER_TEST_BATCH_SIZE" \
+    --grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
+    --max_test_samples "$NER_MAX_TEST_SAMPLES" \
     --max_raw_samples "$MAX_RAW_SAMPLES"
 fi
 
 if run_step 2; then
   echo "[STEP 2] SFT TRAINING"
-  python src/train_pipeline.py \
+  python src/train_ner_pipeline.py \
     --label "$LABEL" \
     --save_folder "$RUN_FOLDER/sft_out" \
     --checkpoint_save_folder "$CHECKPOINT_FOLDER_SFT" \
     --model_repo "$MODEL_REPO" \
-    --task ner \
     --mode "sft" \
     --random_seed "$RANDOM_SEED" \
     --validation_size "$VALIDATION_SIZE" \
     --test_size "$TEST_SIZE" \
     --target_modules "$TARGET_MODULES" \
-    --ner_max_entities "$NER_MAX_ENTITIES" \
-    --ner_sft_learning_rate "$NER_SFT_LEARNING_RATE" \
-    --ner_sft_lora_rank "$NER_SFT_LORA_RANK" \
-    --ner_sft_batch_size "$NER_SFT_BATCH_SIZE" \
-    --ner_sft_gradient_accumulation_steps "$NER_SFT_GRADIENT_ACCUMULATION_STEPS" \
-    --ner_sft_num_epochs "$NER_SFT_NUM_EPOCHS" \
-    --ner_sft_save_steps "$NER_SFT_SAVE_STEPS" \
-    --ner_sft_eval_steps "$NER_SFT_EVAL_STEPS" \
-    --ner_sft_max_steps "$NER_SFT_MAX_STEPS" \
-    --ner_grpo_learning_rate "$NER_GRPO_LEARNING_RATE" \
-    --ner_grpo_lora_rank "$NER_GRPO_LORA_RANK" \
-    --ner_grpo_batch_size "$NER_GRPO_BATCH_SIZE" \
-    --ner_grpo_gradient_accumulation_steps "$NER_GRPO_GRADIENT_ACCUMULATION_STEPS" \
-    --ner_grpo_num_generations "$NER_GRPO_NUM_GENERATIONS" \
-    --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
-    --ner_grpo_num_epochs "$NER_GRPO_NUM_EPOCHS" \
-    --ner_grpo_beta "$NER_GRPO_BETA" \
-    --ner_grpo_temperature "$NER_GRPO_TEMPERATURE" \
-    --ner_grpo_eval_steps "$NER_GRPO_EVAL_STEPS" \
-    --ner_grpo_max_steps "$NER_GRPO_MAX_STEPS" \
-    --ner_max_negatives "$NER_MAX_NEGATIVES" \
+    --max_entities "$NER_MAX_ENTITIES" \
+    --sft_learning_rate "$NER_SFT_LEARNING_RATE" \
+    --sft_lora_rank "$NER_SFT_LORA_RANK" \
+    --sft_batch_size "$NER_SFT_BATCH_SIZE" \
+    --sft_gradient_accumulation_steps "$NER_SFT_GRADIENT_ACCUMULATION_STEPS" \
+    --sft_num_epochs "$NER_SFT_NUM_EPOCHS" \
+    --sft_save_steps "$NER_SFT_SAVE_STEPS" \
+    --sft_eval_steps "$NER_SFT_EVAL_STEPS" \
+    --sft_max_steps "$NER_SFT_MAX_STEPS" \
+    --grpo_learning_rate "$NER_GRPO_LEARNING_RATE" \
+    --grpo_lora_rank "$NER_GRPO_LORA_RANK" \
+    --grpo_batch_size "$NER_GRPO_BATCH_SIZE" \
+    --grpo_gradient_accumulation_steps "$NER_GRPO_GRADIENT_ACCUMULATION_STEPS" \
+    --grpo_num_generations "$NER_GRPO_NUM_GENERATIONS" \
+    --grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
+    --grpo_num_epochs "$NER_GRPO_NUM_EPOCHS" \
+    --grpo_beta "$NER_GRPO_BETA" \
+    --grpo_temperature "$NER_GRPO_TEMPERATURE" \
+    --grpo_eval_steps "$NER_GRPO_EVAL_STEPS" \
+    --grpo_max_steps "$NER_GRPO_MAX_STEPS" \
+    --max_negatives "$NER_MAX_NEGATIVES" \
     --max_raw_samples "$MAX_RAW_SAMPLES" \
-    --ner_sft_max_train_samples "$NER_SFT_MAX_TRAIN_SAMPLES" \
-    --ner_sft_max_validation_samples "$NER_SFT_MAX_VALIDATION_SAMPLES" \
-    --ner_grpo_max_train_samples "$NER_GRPO_MAX_TRAIN_SAMPLES" \
-    --ner_grpo_max_validation_samples "$NER_GRPO_MAX_VALIDATION_SAMPLES"
+    --sft_max_train_samples "$NER_SFT_MAX_TRAIN_SAMPLES" \
+    --sft_max_validation_samples "$NER_SFT_MAX_VALIDATION_SAMPLES" \
+    --grpo_max_train_samples "$NER_GRPO_MAX_TRAIN_SAMPLES" \
+    --grpo_max_validation_samples "$NER_GRPO_MAX_VALIDATION_SAMPLES"
 fi
 
 if run_step 3; then
   echo "[STEP 3] TEST SFT MODEL"
-  python src/test_pipeline.py \
+  python src/test_ner_pipeline.py \
     --metrics_path "$RUN_FOLDER/sft_metrics.json" \
     --model_repo "$MODEL_REPO" \
-    --task ner \
     --mode sft \
     --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
     --verbose \
     --random_seed "$RANDOM_SEED" \
     --validation_size "$VALIDATION_SIZE" \
     --test_size "$TEST_SIZE" \
-    --ner_max_entities "$NER_MAX_ENTITIES" \
-    --ner_test_batch_size "$NER_TEST_BATCH_SIZE" \
-    --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
-    --ner_max_test_samples "$NER_MAX_TEST_SAMPLES" \
+    --max_entities "$NER_MAX_ENTITIES" \
+    --test_batch_size "$NER_TEST_BATCH_SIZE" \
+    --grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
+    --max_test_samples "$NER_MAX_TEST_SAMPLES" \
     --max_raw_samples "$MAX_RAW_SAMPLES"
 fi
 
 if run_step 4; then
   echo "[STEP 4] GRPO TRAINING"
-  python src/train_pipeline.py \
+  python src/train_ner_pipeline.py \
     --label "$LABEL" \
     --save_folder "$RUN_FOLDER/grpo_out" \
     --checkpoint_load_folder "$CHECKPOINT_FOLDER_SFT" \
     --checkpoint_save_folder "$CHECKPOINT_FOLDER_GRPO" \
     --model_repo "$MODEL_REPO" \
-    --task ner \
     --mode "grpo" \
     --random_seed "$RANDOM_SEED" \
     --validation_size "$VALIDATION_SIZE" \
     --test_size "$TEST_SIZE" \
     --target_modules "$TARGET_MODULES" \
-    --ner_max_entities "$NER_MAX_ENTITIES" \
-    --ner_sft_learning_rate "$NER_SFT_LEARNING_RATE" \
-    --ner_sft_lora_rank "$NER_SFT_LORA_RANK" \
-    --ner_sft_batch_size "$NER_SFT_BATCH_SIZE" \
-    --ner_sft_gradient_accumulation_steps "$NER_SFT_GRADIENT_ACCUMULATION_STEPS" \
-    --ner_sft_num_epochs "$NER_SFT_NUM_EPOCHS" \
-    --ner_sft_save_steps "$NER_SFT_SAVE_STEPS" \
-    --ner_sft_eval_steps "$NER_SFT_EVAL_STEPS" \
-    --ner_sft_max_steps "$NER_SFT_MAX_STEPS" \
-    --ner_grpo_learning_rate "$NER_GRPO_LEARNING_RATE" \
-    --ner_grpo_lora_rank "$NER_GRPO_LORA_RANK" \
-    --ner_grpo_batch_size "$NER_GRPO_BATCH_SIZE" \
-    --ner_grpo_gradient_accumulation_steps "$NER_GRPO_GRADIENT_ACCUMULATION_STEPS" \
-    --ner_grpo_num_generations "$NER_GRPO_NUM_GENERATIONS" \
-    --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
-    --ner_grpo_num_epochs "$NER_GRPO_NUM_EPOCHS" \
-    --ner_grpo_beta "$NER_GRPO_BETA" \
-    --ner_grpo_temperature "$NER_GRPO_TEMPERATURE" \
-    --ner_grpo_eval_steps "$NER_GRPO_EVAL_STEPS" \
-    --ner_grpo_max_steps "$NER_GRPO_MAX_STEPS" \
-    --ner_max_negatives "$NER_MAX_NEGATIVES" \
+    --max_entities "$NER_MAX_ENTITIES" \
+    --sft_learning_rate "$NER_SFT_LEARNING_RATE" \
+    --sft_lora_rank "$NER_SFT_LORA_RANK" \
+    --sft_batch_size "$NER_SFT_BATCH_SIZE" \
+    --sft_gradient_accumulation_steps "$NER_SFT_GRADIENT_ACCUMULATION_STEPS" \
+    --sft_num_epochs "$NER_SFT_NUM_EPOCHS" \
+    --sft_save_steps "$NER_SFT_SAVE_STEPS" \
+    --sft_eval_steps "$NER_SFT_EVAL_STEPS" \
+    --sft_max_steps "$NER_SFT_MAX_STEPS" \
+    --grpo_learning_rate "$NER_GRPO_LEARNING_RATE" \
+    --grpo_lora_rank "$NER_GRPO_LORA_RANK" \
+    --grpo_batch_size "$NER_GRPO_BATCH_SIZE" \
+    --grpo_gradient_accumulation_steps "$NER_GRPO_GRADIENT_ACCUMULATION_STEPS" \
+    --grpo_num_generations "$NER_GRPO_NUM_GENERATIONS" \
+    --grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
+    --grpo_num_epochs "$NER_GRPO_NUM_EPOCHS" \
+    --grpo_beta "$NER_GRPO_BETA" \
+    --grpo_temperature "$NER_GRPO_TEMPERATURE" \
+    --grpo_eval_steps "$NER_GRPO_EVAL_STEPS" \
+    --grpo_max_steps "$NER_GRPO_MAX_STEPS" \
+    --max_negatives "$NER_MAX_NEGATIVES" \
     --max_raw_samples "$MAX_RAW_SAMPLES" \
-    --ner_sft_max_train_samples "$NER_SFT_MAX_TRAIN_SAMPLES" \
-    --ner_sft_max_validation_samples "$NER_SFT_MAX_VALIDATION_SAMPLES" \
-    --ner_grpo_max_train_samples "$NER_GRPO_MAX_TRAIN_SAMPLES" \
-    --ner_grpo_max_validation_samples "$NER_GRPO_MAX_VALIDATION_SAMPLES"
+    --sft_max_train_samples "$NER_SFT_MAX_TRAIN_SAMPLES" \
+    --sft_max_validation_samples "$NER_SFT_MAX_VALIDATION_SAMPLES" \
+    --grpo_max_train_samples "$NER_GRPO_MAX_TRAIN_SAMPLES" \
+    --grpo_max_validation_samples "$NER_GRPO_MAX_VALIDATION_SAMPLES"
 fi
 
 if run_step 5; then
   echo "[STEP 5] TEST GRPO MODEL"
-  python src/test_pipeline.py \
+  python src/test_ner_pipeline.py \
     --metrics_path "$RUN_FOLDER/grpo_metrics.json" \
     --model_repo "$MODEL_REPO" \
-    --task ner \
     --mode grpo \
     --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
     --grpo_checkpoint_folder "$CHECKPOINT_FOLDER_GRPO" \
@@ -328,10 +321,10 @@ if run_step 5; then
     --random_seed "$RANDOM_SEED" \
     --validation_size "$VALIDATION_SIZE" \
     --test_size "$TEST_SIZE" \
-    --ner_max_entities "$NER_MAX_ENTITIES" \
-    --ner_test_batch_size "$NER_TEST_BATCH_SIZE" \
-    --ner_grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
-    --ner_max_test_samples "$NER_MAX_TEST_SAMPLES" \
+    --max_entities "$NER_MAX_ENTITIES" \
+    --test_batch_size "$NER_TEST_BATCH_SIZE" \
+    --grpo_max_completion_length "$NER_GRPO_MAX_COMPLETION_LENGTH" \
+    --max_test_samples "$NER_MAX_TEST_SAMPLES" \
     --max_raw_samples "$MAX_RAW_SAMPLES"
 fi
 

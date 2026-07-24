@@ -3,6 +3,18 @@
 import peft
 import trl
 
+# Possible LoRA target modules. Task-agnostic (a model-architecture choice, not a
+# task-specific one) -- shared by both training pipelines.
+TARGET_MODULES = {
+    "attention_only": [
+        "q_proj", "k_proj", "v_proj", "o_proj"
+    ],
+    "all_linear": [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+    ]
+}
+
 # MODEL FINE TUNE CODE
 
 def collate_fn(samples, processor):
