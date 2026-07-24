@@ -155,9 +155,10 @@ def execute_grpo(
     """max_train_samples/max_validation_samples: -1 means "no limit".
 
     Task-agnostic: `reward_funcs` is a list of already-resolved reward
-    functions (e.g. `eval_code.REWARD_FUNCTIONS[reward_fn]`) passed in by the
-    caller, so this function itself doesn't need to know which task -- or
-    which task's reward registry -- it's being used for.
+    functions (e.g. `eval_code.NER_REWARD_FUNCTIONS[reward_fn]` or
+    `eval_code.SFNER_REWARD_FUNCTIONS[reward_fn]`) passed in by the caller, so
+    this function itself doesn't need to know which task -- or which task's
+    reward registry -- it's being used for.
     """
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples != -1 else ds["train"]

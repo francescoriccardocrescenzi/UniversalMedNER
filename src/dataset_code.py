@@ -2,10 +2,10 @@
 
 This module prepares the shared IOB-tagged Pile-NER dataset for both tasks:
 NER (given the text and a candidate list of entity types, extract matching
-spans) and labelling/lbl (given only the text, find and type every entity
+spans) and schema-free NER/sfner (given only the text, find and type every entity
 present). Functions with no task-specific logic (dataset splitting, IOB span
 extraction, the SFT->GRPO prompt/answer split) are shared; everything else
-comes in an `_ner_`/`_lbl_` pair.
+comes in an `_ner_`/`_sfner_` pair.
 """
 
 # --- IMPORTS ---
@@ -80,15 +80,16 @@ def to_grpo_ds(sft_ds):
         remove_columns=["messages"]
     )
 
-def compute_negative_stats(ds):
-    """Compute per-sample positive/negative entity-label statistics for a formatted dataset.
+def compute_ner_negative_stats(ds):
+    """Compute per-sample positive/negative entity-label statistics for a
+    formatted NER dataset.
 
     Works on both SFT-formatted samples ("messages", assistant turn holds the
     entity json) and GRPO-formatted samples ("answer" holds the entity json).
-    For the labelling task every included label is by construction positive
-    (there's no candidate list to probe negatively against), so this will
-    report a 0% negative rate there -- still a harmless sanity check that the
-    data-prep pipeline produced the expected shape.
+    NER-only: the schema-free NER task has no candidate list to probe negatively
+    against, so its ground truth never contains a negative (empty-span) label
+    and this stat would be degenerately 0% there -- callers should skip it for
+    `sfner` rather than compute a meaningless number.
     """
     n_pos_total = 0
     n_neg_total = 0
@@ -260,10 +261,10 @@ def create_ner_grpo_ds(ds, max_entities, detok, max_negatives=-1):
     return to_grpo_ds(create_ner_sft_ds(ds, max_entities, detok, max_negatives))
 
 
-# --- Labelling (open-set discovery: no candidate list, model finds+types everything) ---
+# --- Schema-free NER (open-set discovery: no candidate list, model finds+types everything) ---
 
-def format_lbl_sft(sample, detok):
-    """Create SFT sample from IOB sample, for the open-set labelling task.
+def format_sfner_sft(sample, detok):
+    """Create SFT sample from IOB sample, for the schema-free NER task.
 
     Unlike `format_ner_sft`, there is no candidate entity list to sample
     positives/negatives from: every entity type present in the sample is
@@ -326,13 +327,13 @@ def format_lbl_sft(sample, detok):
         ]
     }
 
-def create_lbl_sft_ds(ds, detok):
+def create_sfner_sft_ds(ds, detok):
     """Convert a whole IOB format dataset into an SFT format dataset for the
-    labelling task. Apply `format_lbl_sft` to each sample."""
+    schema-free NER task. Apply `format_sfner_sft` to each sample."""
     return ds.map(
-        lambda sample: format_lbl_sft(sample, detok),
+        lambda sample: format_sfner_sft(sample, detok),
         remove_columns=["tokens", "ner_tags"]
     )
 
-def create_lbl_grpo_ds(ds, detok):
-    return to_grpo_ds(create_lbl_sft_ds(ds, detok))
+def create_sfner_grpo_ds(ds, detok):
+    return to_grpo_ds(create_sfner_sft_ds(ds, detok))

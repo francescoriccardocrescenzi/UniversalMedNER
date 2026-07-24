@@ -1,13 +1,13 @@
 """Trains a LoRA adapter (SFT or GRPO) for MedGemma on one of two tasks and
-uploads the best checkpoint to the HF Hub. Invoked by run_full_pipeline.sh
-(--task ner) or run_full_lbl_pipeline.sh (--task lbl), which are the single
+uploads the best checkpoint to the HF Hub. Invoked by run_full_ner_pipeline.sh
+(--task ner) or run_full_sfner_pipeline.sh (--task sfner), which are the single
 source of truth for hyperparameter defaults; every hyperparameter flag below
 is required here, with no default (except where noted).
 
 Paths/repos: --save_folder --model_repo --checkpoint_repo
     --checkpoint_save_folder --checkpoint_load_folder --label
 
---task {ner,lbl} and --mode {sft,grpo} are task-orthogonal control flags:
+--task {ner,sfner} and --mode {sft,grpo} are task-orthogonal control flags:
 --task picks which dataset-prep/reward logic runs, --mode picks which stage.
 
 Shared (identical meaning/value regardless of --task): --dataset_repo
@@ -27,15 +27,15 @@ Per-task (every flag below is required, but only for the block matching
     --ner_grpo_max_train_samples --ner_grpo_max_validation_samples
     --ner_grpo_beta --ner_grpo_temperature --ner_grpo_eval_steps
     --ner_grpo_max_steps
-(and the `--lbl_*` mirror of every flag above except max_entities/max_negatives,
-which don't apply to the labelling task -- it has no candidate entity list to
+(and the `--sfner_*` mirror of every flag above except max_entities/max_negatives,
+which don't apply to the schema-free NER task -- it has no candidate entity list to
 sample positives/negatives from.)
 
 -1 means "unset"/"no limit" for --ner_max_negatives, --max_raw_samples, and
-every --{ner,lbl}_*_max_train_samples/--{ner,lbl}_*_max_validation_samples flag
+every --{ner,sfner}_*_max_train_samples/--{ner,sfner}_*_max_validation_samples flag
 (0 is a real value for these, e.g. --ner_max_negatives=0 forces zero negative
 entities); the functions consuming each value check for -1 directly.
---{ner,lbl}_sft_max_steps/--{ner,lbl}_grpo_max_steps also use -1, unrelated:
+--{ner,sfner}_sft_max_steps/--{ner,sfner}_grpo_max_steps also use -1, unrelated:
 passed straight through to TRL, where -1 natively means "no cap" (TRL's own
 default).
 """
@@ -83,15 +83,15 @@ REQUIRED_BY_TASK = {
         "ner_grpo_beta", "ner_grpo_temperature", "ner_grpo_eval_steps",
         "ner_grpo_max_steps",
     ],
-    "lbl": [
-        "lbl_sft_learning_rate", "lbl_sft_lora_rank", "lbl_sft_batch_size",
-        "lbl_sft_gradient_accumulation_steps", "lbl_sft_num_epochs",
-        "lbl_sft_save_steps", "lbl_sft_eval_steps", "lbl_sft_max_steps",
-        "lbl_grpo_learning_rate", "lbl_grpo_lora_rank", "lbl_grpo_batch_size",
-        "lbl_grpo_gradient_accumulation_steps", "lbl_grpo_num_generations",
-        "lbl_grpo_max_completion_length", "lbl_grpo_num_epochs",
-        "lbl_grpo_beta", "lbl_grpo_temperature", "lbl_grpo_eval_steps",
-        "lbl_grpo_max_steps",
+    "sfner": [
+        "sfner_sft_learning_rate", "sfner_sft_lora_rank", "sfner_sft_batch_size",
+        "sfner_sft_gradient_accumulation_steps", "sfner_sft_num_epochs",
+        "sfner_sft_save_steps", "sfner_sft_eval_steps", "sfner_sft_max_steps",
+        "sfner_grpo_learning_rate", "sfner_grpo_lora_rank", "sfner_grpo_batch_size",
+        "sfner_grpo_gradient_accumulation_steps", "sfner_grpo_num_generations",
+        "sfner_grpo_max_completion_length", "sfner_grpo_num_epochs",
+        "sfner_grpo_beta", "sfner_grpo_temperature", "sfner_grpo_eval_steps",
+        "sfner_grpo_max_steps",
     ],
 }
 
@@ -104,7 +104,7 @@ def parse_args():
     parser.add_argument("--checkpoint_load_folder", type=str, default=None)
     parser.add_argument("--label", type=str)
 
-    parser.add_argument("--task", type=str, choices=["ner", "lbl"], required=True)
+    parser.add_argument("--task", type=str, choices=["ner", "sfner"], required=True)
     parser.add_argument("--mode", type=str, choices=["sft", "grpo"], default="sft")
 
     # Shared hyperparameters (identical regardless of --task)
@@ -115,10 +115,10 @@ def parse_args():
     parser.add_argument("--target_modules", type=str, choices=["attention_only", "all_linear"], required=True)
     parser.add_argument("--max_raw_samples", type=int, default=-1)
 
-    # NER-only (no --lbl_* equivalent: labelling has no candidate list to sample from)
+    # NER-only (no --sfner_* equivalent: schema-free NER has no candidate list to sample from)
     parser.add_argument("--ner_max_entities", type=int, default=None)
     parser.add_argument("--ner_max_negatives", type=int, default=-1)
-    parser.add_argument("--ner_reward_fn", type=str, choices=list(ec.REWARD_FUNCTIONS.keys()), default="structured")
+    parser.add_argument("--ner_reward_fn", type=str, choices=list(ec.NER_REWARD_FUNCTIONS.keys()), default="structured")
 
     parser.add_argument("--ner_sft_learning_rate", type=float, default=None)
     parser.add_argument("--ner_sft_lora_rank", type=int, default=None)
@@ -145,33 +145,33 @@ def parse_args():
     parser.add_argument("--ner_grpo_eval_steps", type=int, default=None)
     parser.add_argument("--ner_grpo_max_steps", type=int, default=None)
 
-    # Labelling-only
-    parser.add_argument("--lbl_reward_fn", type=str, choices=list(ec.REWARD_FUNCTIONS.keys()), default="structured")
+    # Schema-free-NER-only
+    parser.add_argument("--sfner_reward_fn", type=str, choices=list(ec.SFNER_REWARD_FUNCTIONS.keys()), default="structured")
 
-    parser.add_argument("--lbl_sft_learning_rate", type=float, default=None)
-    parser.add_argument("--lbl_sft_lora_rank", type=int, default=None)
-    parser.add_argument("--lbl_sft_batch_size", type=int, default=None)
-    parser.add_argument("--lbl_sft_gradient_accumulation_steps", type=int, default=None)
-    parser.add_argument("--lbl_sft_num_epochs", type=int, default=None)
-    parser.add_argument("--lbl_sft_max_train_samples", type=int, default=-1)
-    parser.add_argument("--lbl_sft_max_validation_samples", type=int, default=-1)
-    parser.add_argument("--lbl_sft_save_steps", type=int, default=None)
-    parser.add_argument("--lbl_sft_eval_steps", type=int, default=None)
-    parser.add_argument("--lbl_sft_max_steps", type=int, default=None)
+    parser.add_argument("--sfner_sft_learning_rate", type=float, default=None)
+    parser.add_argument("--sfner_sft_lora_rank", type=int, default=None)
+    parser.add_argument("--sfner_sft_batch_size", type=int, default=None)
+    parser.add_argument("--sfner_sft_gradient_accumulation_steps", type=int, default=None)
+    parser.add_argument("--sfner_sft_num_epochs", type=int, default=None)
+    parser.add_argument("--sfner_sft_max_train_samples", type=int, default=-1)
+    parser.add_argument("--sfner_sft_max_validation_samples", type=int, default=-1)
+    parser.add_argument("--sfner_sft_save_steps", type=int, default=None)
+    parser.add_argument("--sfner_sft_eval_steps", type=int, default=None)
+    parser.add_argument("--sfner_sft_max_steps", type=int, default=None)
 
-    parser.add_argument("--lbl_grpo_learning_rate", type=float, default=None)
-    parser.add_argument("--lbl_grpo_lora_rank", type=int, default=None)
-    parser.add_argument("--lbl_grpo_batch_size", type=int, default=None)
-    parser.add_argument("--lbl_grpo_gradient_accumulation_steps", type=int, default=None)
-    parser.add_argument("--lbl_grpo_num_generations", type=int, default=None)
-    parser.add_argument("--lbl_grpo_max_completion_length", type=int, default=None)
-    parser.add_argument("--lbl_grpo_num_epochs", type=int, default=None)
-    parser.add_argument("--lbl_grpo_max_train_samples", type=int, default=-1)
-    parser.add_argument("--lbl_grpo_max_validation_samples", type=int, default=-1)
-    parser.add_argument("--lbl_grpo_beta", type=float, default=None)
-    parser.add_argument("--lbl_grpo_temperature", type=float, default=None)
-    parser.add_argument("--lbl_grpo_eval_steps", type=int, default=None)
-    parser.add_argument("--lbl_grpo_max_steps", type=int, default=None)
+    parser.add_argument("--sfner_grpo_learning_rate", type=float, default=None)
+    parser.add_argument("--sfner_grpo_lora_rank", type=int, default=None)
+    parser.add_argument("--sfner_grpo_batch_size", type=int, default=None)
+    parser.add_argument("--sfner_grpo_gradient_accumulation_steps", type=int, default=None)
+    parser.add_argument("--sfner_grpo_num_generations", type=int, default=None)
+    parser.add_argument("--sfner_grpo_max_completion_length", type=int, default=None)
+    parser.add_argument("--sfner_grpo_num_epochs", type=int, default=None)
+    parser.add_argument("--sfner_grpo_max_train_samples", type=int, default=-1)
+    parser.add_argument("--sfner_grpo_max_validation_samples", type=int, default=-1)
+    parser.add_argument("--sfner_grpo_beta", type=float, default=None)
+    parser.add_argument("--sfner_grpo_temperature", type=float, default=None)
+    parser.add_argument("--sfner_grpo_eval_steps", type=int, default=None)
+    parser.add_argument("--sfner_grpo_max_steps", type=int, default=None)
 
     args = parser.parse_args()
     missing = [f"--{name}" for name in REQUIRED_BY_TASK[args.task] if getattr(args, name) is None]
@@ -200,16 +200,17 @@ if __name__ == "__main__":
             max_negatives=args.ner_max_negatives,
         )
     else:
-        create_ds_fn = dc.create_lbl_sft_ds if args.mode == "sft" else dc.create_lbl_grpo_ds
+        create_ds_fn = dc.create_sfner_sft_ds if args.mode == "sft" else dc.create_sfner_grpo_ds
         pile_ds = create_ds_fn(ds=raw_ds, detok=detok)
     pile_ds = dc.get_split_ds(pile_ds, args.validation_size, args.test_size, args.random_seed)
     print("[OK] Dataset prepared:")
     print(pile_ds)
 
-    print("[INFO] Computing negative-entity statistics...")
-    negative_stats = dc.compute_negative_stats(pile_ds["train"])
-    print("[OK] Negative-entity statistics:")
-    print(negative_stats)
+    if args.task == "ner":
+        print("[INFO] Computing negative-entity statistics...")
+        negative_stats = dc.compute_ner_negative_stats(pile_ds["train"])
+        print("[OK] Negative-entity statistics:")
+        print(negative_stats)
 
     print("[INFO] Loading model...")
     processor = transformers.AutoProcessor.from_pretrained(args.model_repo, backend="pil")
@@ -258,38 +259,38 @@ if __name__ == "__main__":
             num_epochs=args.ner_grpo_num_epochs,
             beta=args.ner_grpo_beta,
             temperature=args.ner_grpo_temperature,
-            reward_funcs=ec.REWARD_FUNCTIONS[args.ner_reward_fn],
+            reward_funcs=ec.NER_REWARD_FUNCTIONS[args.ner_reward_fn],
             eval_steps=args.ner_grpo_eval_steps,
             max_steps=args.ner_grpo_max_steps,
         )
     else:
         sft_kwargs = dict(
-            learning_rate=args.lbl_sft_learning_rate,
-            lora_rank=args.lbl_sft_lora_rank,
-            max_train_samples=args.lbl_sft_max_train_samples,
-            max_validation_samples=args.lbl_sft_max_validation_samples,
-            batch_size=args.lbl_sft_batch_size,
-            gradient_accumulation_steps=args.lbl_sft_gradient_accumulation_steps,
-            num_epochs=args.lbl_sft_num_epochs,
-            save_steps=args.lbl_sft_save_steps,
-            eval_steps=args.lbl_sft_eval_steps,
-            max_steps=args.lbl_sft_max_steps,
+            learning_rate=args.sfner_sft_learning_rate,
+            lora_rank=args.sfner_sft_lora_rank,
+            max_train_samples=args.sfner_sft_max_train_samples,
+            max_validation_samples=args.sfner_sft_max_validation_samples,
+            batch_size=args.sfner_sft_batch_size,
+            gradient_accumulation_steps=args.sfner_sft_gradient_accumulation_steps,
+            num_epochs=args.sfner_sft_num_epochs,
+            save_steps=args.sfner_sft_save_steps,
+            eval_steps=args.sfner_sft_eval_steps,
+            max_steps=args.sfner_sft_max_steps,
         )
         grpo_kwargs = dict(
-            learning_rate=args.lbl_grpo_learning_rate,
-            lora_rank=args.lbl_grpo_lora_rank,
-            max_train_samples=args.lbl_grpo_max_train_samples,
-            max_validation_samples=args.lbl_grpo_max_validation_samples,
-            batch_size=args.lbl_grpo_batch_size,
-            gradient_accumulation_steps=args.lbl_grpo_gradient_accumulation_steps,
-            num_generations=args.lbl_grpo_num_generations,
-            max_completion_length=args.lbl_grpo_max_completion_length,
-            num_epochs=args.lbl_grpo_num_epochs,
-            beta=args.lbl_grpo_beta,
-            temperature=args.lbl_grpo_temperature,
-            reward_funcs=ec.REWARD_FUNCTIONS[args.lbl_reward_fn],
-            eval_steps=args.lbl_grpo_eval_steps,
-            max_steps=args.lbl_grpo_max_steps,
+            learning_rate=args.sfner_grpo_learning_rate,
+            lora_rank=args.sfner_grpo_lora_rank,
+            max_train_samples=args.sfner_grpo_max_train_samples,
+            max_validation_samples=args.sfner_grpo_max_validation_samples,
+            batch_size=args.sfner_grpo_batch_size,
+            gradient_accumulation_steps=args.sfner_grpo_gradient_accumulation_steps,
+            num_generations=args.sfner_grpo_num_generations,
+            max_completion_length=args.sfner_grpo_max_completion_length,
+            num_epochs=args.sfner_grpo_num_epochs,
+            beta=args.sfner_grpo_beta,
+            temperature=args.sfner_grpo_temperature,
+            reward_funcs=ec.SFNER_REWARD_FUNCTIONS[args.sfner_reward_fn],
+            eval_steps=args.sfner_grpo_eval_steps,
+            max_steps=args.sfner_grpo_max_steps,
         )
 
     if args.mode == "sft":

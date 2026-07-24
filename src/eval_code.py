@@ -1,10 +1,19 @@
-"""Inference and evaluation code.
+"""Metrics and GRPO reward functions.
 
-This module contains functions to run entity-extraction inference with
-MedGemma and to compute micro F1 over its outputs. Fully task-agnostic: every
-function here operates on the shared `Dict[str, List[str]]` (entity type ->
-spans) JSON schema, not on any task-specific prompt or sampling logic, so it's
-reused as-is by both the NER and labelling (lbl) pipelines.
+This module is pure scoring code: every function here operates on already-
+generated text (a ground-truth JSON string and a predicted JSON string), never
+on a model. Model inference lives in `inference_code.py`; `score_completions`
+below is the scoring counterpart to that module's `generate_completions`.
+
+F1 computation (`compute_sample_counts`/`compute_entity_counts` and friends) is
+fully task-agnostic and shared verbatim by both the NER and schema-free NER (sfner)
+tasks. The GRPO "structured" reward, however, is task-split: NER's ground
+truth deliberately includes negative entity types (empty span lists, sampled
+from the candidate list the model wasn't asked about) so its reward tracks a
+positive/negative quality split, while sfner's ground truth -- built from
+whichever entity types are actually present in the text -- never contains a
+negative type, so its reward has a single, undivided extraction-quality
+component.
 """
 
 # --- IMPORTS ---
@@ -12,11 +21,9 @@ reused as-is by both the NER and labelling (lbl) pipelines.
 from pathlib import Path
 from collections import Counter
 import json
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from scipy import optimize as sp_optimize
-import torch
 
 
 # --- METRIC COMPUTATION HELPERS ---
@@ -151,8 +158,20 @@ def compute_sample_counts(gt_json, pred_json, modes=F1_MODES):
     except (json.JSONDecodeError, ValueError):
         return {mode: (0, 0, 0) for mode in modes}, 1
 
+def compute_sample_f1(gt_json, pred_json, mode="soft"):
+    """Compute micro F1 for a single sample, using the given F1 mode."""
+    counts, json_error = compute_sample_counts(gt_json, pred_json, modes=(mode,))
+    TP, GT, PRED = counts[mode]
 
-# --- INFERENCE AND EVALUATION ---
+    if json_error:
+        return 0.0
+    elif GT + PRED == 0:
+        return 1.0
+    else:
+        return 2 * TP / (GT + PRED)
+
+
+# --- SCORING (pure -- consumes inference_code.generate_completions records) ---
 
 def clean_prediction(s):
     """Strip markdown code fences from a model prediction."""
@@ -161,201 +180,65 @@ def clean_prediction(s):
     s = s.split("<end_of_turn>", 1)[0]
     return s
 
-def run_batched_inference(model, processor, prompts, max_new_tokens=200, temperature=None, top_p=None):
-    """Run model inference on a batch of samples.
-
-    By default generation is greedy (`do_sample=False`), matching prior
-    behavior. Passing `temperature` and/or `top_p` switches to sampling with
-    those parameters.
-
-    Returns a (responses, truncated) pair: `responses` are the cleaned model
-    outputs and `truncated` is a parallel list of booleans flagging samples
-    whose generation hit `max_new_tokens` without emitting an end-of-sequence
-    token, i.e. the same "clipped" condition GRPOTrainer tracks (its
-    `is_truncated = ids[-1] not in eos_and_pad`) for `completions/clipped_ratio`.
-    """
-
-    # Apply chat template per sample
-    texts = [
-        processor.apply_chat_template(
-            prompt,
-            add_generation_prompt=True,
-            tokenize=False
-        )
-        for prompt in prompts
-    ]
-
-    # Tokenize batch
-    inputs = processor(
-        text=texts,
-        return_tensors="pt",
-        padding=True,
-        truncation=True
-    ).to(model.device)
-    prompt_len = inputs["input_ids"].shape[1]
-
-    # Stop generation on either the tokenizer's EOS or the chat template's end-of-turn
-    # marker. Don't rely solely on model.generation_config: it can silently end up
-    # missing one of these (e.g. after merging a LoRA adapter), causing generation to
-    # run all the way to max_new_tokens instead of stopping at the turn boundary.
-    eos_token_id = [
-        processor.tokenizer.eos_token_id,
-        processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
-    ]
-
-    do_sample = temperature is not None or top_p is not None
-    generate_kwargs = dict(
-        max_new_tokens=max_new_tokens,
-        do_sample=do_sample,
-        eos_token_id=eos_token_id,
-    )
-    if do_sample:
-        if temperature is not None:
-            generate_kwargs["temperature"] = temperature
-        if top_p is not None:
-            generate_kwargs["top_p"] = top_p
-
-    with torch.inference_mode():
-        outputs = model.generate(**inputs, **generate_kwargs)
-
-    # Batch decode
-    decoded = processor.tokenizer.batch_decode(
-        outputs,
-        skip_special_tokens=False
-    )
-
-    responses = []
-
-    # Cleanup generated text
-    for text in decoded:
-        responses.append(clean_prediction(text))
-
-    # A generation that stopped naturally has its unfinished rows padded with
-    # pad_token_id after the EOS token, so the last generated token is EOS/pad
-    # unless the row ran out of budget before ever stopping.
-    eos_and_pad = set(eos_token_id) | {processor.tokenizer.pad_token_id}
-    truncated = [
-        row[-1].item() not in eos_and_pad
-        for row in outputs[:, prompt_len:]
-    ]
-
-    # cleanup
-    del inputs
-    del outputs
-    torch.cuda.empty_cache()
-
-    return responses, truncated
-
-def test_model_on_batch(model, processor, pile_ds, split="train", indices=None, max_new_tokens=200, temperature=None, top_p=None):
-    """Run model inference on a batch of samples and print model-response pairs.
-
-    Mainly useful for debugging purposes.
-    """
-    if indices is None:
-        indices = list(range(8))
-    if model.is_gradient_checkpointing:
-        model.gradient_checkpointing_disable()
-
-    prompts = [
-        pile_ds[split][i]["messages"][:-1]
-        for i in indices
-    ]
-
-    responses, truncated = run_batched_inference(
-        model, processor, prompts, max_new_tokens=max_new_tokens, temperature=temperature, top_p=top_p
-    )
-
-    for i, (p, r, t) in enumerate(zip(prompts, responses, truncated)):
-        print(f"\n=== SAMPLE {i} ===")
-        print(f"PROMPT:\n{p}")
-        print(f"RESPONSE:\n{r}")
-        print(f"TRUNCATED: {t}")
-
-def evaluate_dataset(
-    model,
-    processor,
-    ds,
-    batch_size=8,
-    split="test",
-    max_samples=-1,
+def score_completions(
+    records,
+    task,
     modes=F1_MODES,
     compute_rewards=True,
-    max_new_tokens=200,
     completions_path=None,
     temperature=None,
     top_p=None,
 ):
-    """Run inference on dataset and return micro F1 (per requested mode), number
-    of json parsing errors encountered, number of truncated completions, and
-    (optionally) the mean of every GRPO reward component over the dataset.
+    """Score a list of inference records into micro F1 (per requested mode), a
+    json-parsing-error count, a truncation count, and (optionally) the mean of
+    every GRPO reward component over the records.
 
-    You may specify a split, a batch size, an optional maximum number of samples
-    (`max_samples`; -1 means "no limit"), and which F1 mode(s) to compute ("soft",
-    "strict", or both). `max_new_tokens` caps
-    generation length exactly like `max_completion_length` does during GRPO training
-    (pass the same value used there so truncation behaves identically at test time).
-    If `completions_path` is given, every sample's prompt/prediction/ground truth,
+    `records` is the list produced by `inference_code.generate_completions`:
+    each entry has "index", "prompt", "completion" (already cleaned), "ground_truth",
+    and "truncated". `task` selects which reward-component set/registry to use
+    ("ner" or "sfner") -- F1 itself is identical for both. `modes` picks which F1
+    mode(s) to compute ("soft", "strict", or both).
+
+    If `completions_path` is given, every record's prompt/prediction/ground truth,
     reward components, and json/truncation flags are written there as a parquet
     file, mirroring the per-sample completions GRPOTrainer logs during training.
-    The metrics are saved to disk in the specified folder.
-
-    `temperature`/`top_p` are forwarded to `run_batched_inference`: leaving both
-    as `None` keeps generation greedy (the default), passing either switches to
-    sampling with that parameter.
+    `temperature`/`top_p` are recorded in the returned metrics as run metadata
+    only -- they don't affect scoring.
     """
-    # Prepare model for inference
-    if model.is_gradient_checkpointing:
-        model.gradient_checkpointing_disable()
+    compute_sample_rewards = {"ner": compute_ner_sample_rewards, "sfner": compute_sfner_sample_rewards}[task]
+    reward_components = {"ner": NER_REWARD_COMPONENTS, "sfner": SFNER_REWARD_COMPONENTS}[task]
 
-    # Set up accumulators
     totals = {mode: [0, 0, 0] for mode in modes}
     json_errors_total = 0
     n_truncated_total = 0
-    reward_sums = {name: 0.0 for name in REWARD_COMPONENTS} if compute_rewards else {}
+    reward_sums = {name: 0.0 for name in reward_components} if compute_rewards else {}
     completion_rows = [] if completions_path is not None else None
 
-    # Prepare iteration
-    data = ds[split]
-    n = len(data)
-    if max_samples != -1:
-        n = min(n, max_samples)
-
-    for start in tqdm(range(0, n, batch_size), desc="Running inference..."):
-        # Define sample indices for the batch
-        batch_indices = list(range(start, min(start + batch_size, n)))
-        # Select rows
-        batch_rows = [data[i] for i in batch_indices]
-        # Extract prompts and ground truth labels
-        prompts = [row["messages"][:-1] for row in batch_rows]
-        gt_jsons = [row["messages"][-1]["content"] for row in batch_rows]
-        # Compute predictions (already cleaned by run_batched_inference)
-        preds, truncated = run_batched_inference(
-            model, processor, prompts, max_new_tokens=max_new_tokens, temperature=temperature, top_p=top_p
-        )
-        # Compute and accumulate counts
-        for idx, prompt, gt_json, pred, is_truncated in zip(batch_indices, prompts, gt_jsons, preds, truncated):
-            counts, err = compute_sample_counts(gt_json, pred, modes=modes)
-            for mode in modes:
-                tp, gt_c, pred_c = counts[mode]
-                totals[mode][0] += tp
-                totals[mode][1] += gt_c
-                totals[mode][2] += pred_c
-            json_errors_total += err
-            n_truncated_total += int(is_truncated)
-            sample_rewards = compute_sample_rewards(gt_json, pred) if compute_rewards else {}
-            if compute_rewards:
-                for name, value in sample_rewards.items():
-                    reward_sums[name] += value
-            if completion_rows is not None:
-                completion_rows.append({
-                    "index": idx,
-                    "prompt": json.dumps(prompt),
-                    "completion": pred,
-                    "ground_truth": gt_json,
-                    "json_error": bool(err),
-                    "truncated": bool(is_truncated),
-                    **sample_rewards,
-                })
+    n = len(records)
+    for record in records:
+        gt_json, pred, is_truncated = record["ground_truth"], record["completion"], record["truncated"]
+        counts, err = compute_sample_counts(gt_json, pred, modes=modes)
+        for mode in modes:
+            tp, gt_c, pred_c = counts[mode]
+            totals[mode][0] += tp
+            totals[mode][1] += gt_c
+            totals[mode][2] += pred_c
+        json_errors_total += err
+        n_truncated_total += int(is_truncated)
+        sample_rewards = compute_sample_rewards(gt_json, pred) if compute_rewards else {}
+        if compute_rewards:
+            for name, value in sample_rewards.items():
+                reward_sums[name] += value
+        if completion_rows is not None:
+            completion_rows.append({
+                "index": record["index"],
+                "prompt": json.dumps(record["prompt"]),
+                "completion": pred,
+                "ground_truth": gt_json,
+                "json_error": bool(err),
+                "truncated": bool(is_truncated),
+                **sample_rewards,
+            })
 
     # Wrap into dictionary
     metric_dict = {
@@ -384,19 +267,7 @@ def evaluate_dataset(
     return metric_dict
 
 
-# --- GRPO REWARD ---
-
-def compute_sample_f1(gt_json, pred_json, mode="soft"):
-    """Compute micro F1 for a single sample, using the given F1 mode."""
-    counts, json_error = compute_sample_counts(gt_json, pred_json, modes=(mode,))
-    TP, GT, PRED = counts[mode]
-
-    if json_error:
-        return 0.0
-    elif GT + PRED == 0:
-        return 1.0
-    else:
-        return 2 * TP / (GT + PRED)
+# --- SOFT-F1 REWARD (shared) ---
 
 def soft_f1_reward_fn(prompts, completions, answer, **kwargs):
     return [
@@ -411,8 +282,13 @@ def soft_f1_reward_fn(prompts, completions, answer, **kwargs):
 # --- STRUCTURED REWARD ---
 # A level-based reward with early-exit gating: JSON validity, then correct
 # entity-type keys, then per-type extraction quality (exact-match
-# precision/recall). See compute_structured_reward_components below for the
-# full breakdown.
+# precision/recall). Levels 1-2 (format, key matching) are identical for both
+# tasks and factored into `_compute_structured_common`. Level 3 (extraction
+# quality) is task-split: NER's ground truth includes negative entity types
+# (empty span lists) by construction, so its reward tracks positive/negative
+# quality separately; sfner's ground truth never contains a negative type (every
+# type in it was found in the text), so its reward has a single, undivided
+# extraction-quality component -- there is nothing to split.
 
 STRUCTURED_REWARD_BONUS = 1.0  # bonus added to a correctly-formatted answer
 
@@ -452,8 +328,46 @@ def _compute_extraction_score(t_list, o_list):
 
     return score
 
-def compute_structured_reward_components(gt_json, pred_json, bonus=STRUCTURED_REWARD_BONUS):
-    """Compute the structured reward for a single sample, broken down by pseudocode level.
+def _compute_structured_common(gt_json, pred_json):
+    """Compute the shared Level 1 (format) + Level 2 (key matching) components.
+
+    Returns `(format, key_matching, gated, gt, out_dict, ent_types)`. `gated`
+    is True once format/key-matching passed and Level 3 (extraction quality,
+    task-specific) can run; when False the caller should stop, returning
+    whatever components it has initialized to 0.0 so far -- same early-exit
+    gating as before, just factored out since it's identical for both tasks.
+    """
+    # Level 1: JSON parsing
+    try:
+        out_dict = json.loads(pred_json)
+    except json.JSONDecodeError:
+        return 0.0, 0.0, False, None, None, None
+    if not _has_correct_structure(out_dict):
+        return 0.0, 0.0, False, None, None, None
+
+    # Entity-type keys are matched case-insensitively, same as span matching.
+    out_dict = lower_keys(out_dict)
+    gt = lower_keys(json.loads(gt_json))
+    ent_types = list(gt.keys())
+    n_types = len(ent_types)
+
+    # Level 2: key matching
+    key_matching = 0.0
+    for key in out_dict.keys():
+        if key not in ent_types:
+            return 1.0, key_matching, False, None, None, None  # wrong key: stop, no quality component
+        key_matching += 1 / n_types  # partial credit, normalized by expected count
+
+    # Missing keys: all output keys passed the check above, so if the counts
+    # differ the model omitted some expected types. Cap reward here.
+    if len(out_dict) != n_types:
+        return 1.0, key_matching, False, None, None, None
+
+    return 1.0, key_matching, True, gt, out_dict, ent_types
+
+def compute_ner_structured_reward_components(gt_json, pred_json, bonus=STRUCTURED_REWARD_BONUS):
+    """Compute the NER structured reward for a single sample, broken down by
+    pseudocode level.
 
     GT is assumed to always be well-formed (Dict[str -> List[str]], one entry
     per expected entity type, empty list for negative types).
@@ -470,38 +384,17 @@ def compute_structured_reward_components(gt_json, pred_json, bonus=STRUCTURED_RE
     and negative-type (no GT spans) performance can be tracked separately in
     wandb; their sum reproduces the original single "extraction_quality" value.
     """
+    fmt, key_matching, gated, gt, out_dict, ent_types = _compute_structured_common(gt_json, pred_json)
     components = {
-        "format": 0.0,
-        "key_matching": 0.0,
+        "format": fmt,
+        "key_matching": key_matching,
         "extraction_quality_positive": 0.0,
         "extraction_quality_negative": 0.0,
     }
-
-    # Level 1: JSON parsing
-    try:
-        out_dict = json.loads(pred_json)
-    except json.JSONDecodeError:
+    if not gated:
         return components
-    if not _has_correct_structure(out_dict):
-        return components
-    components["format"] = 1.0
 
-    # Entity-type keys are matched case-insensitively, same as span matching.
-    out_dict = lower_keys(out_dict)
-    gt = lower_keys(json.loads(gt_json))
-    ent_types = list(gt.keys())
     n_types = len(ent_types)
-
-    # Level 2: key matching
-    for key in out_dict.keys():
-        if key not in ent_types:
-            return components  # wrong key found: stop here, no bonus, no quality component
-        components["key_matching"] += 1 / n_types  # partial credit, normalized by expected count
-
-    # Missing keys: all output keys passed the check above, so if the counts
-    # differ the model omitted some expected types. Cap reward here.
-    if len(out_dict) != n_types:
-        return components
 
     # Level 3: extraction quality, split into positive types (GT has spans)
     # and negative types (GT is empty for that type).
@@ -533,7 +426,47 @@ def compute_structured_reward_components(gt_json, pred_json, bonus=STRUCTURED_RE
 
     return components
 
-REWARD_COMPONENTS = (
+def compute_sfner_structured_reward_components(gt_json, pred_json, bonus=STRUCTURED_REWARD_BONUS):
+    """Compute the schema-free NER structured reward for a single sample, broken
+    down by pseudocode level.
+
+    GT is assumed to always be well-formed (Dict[str -> List[str]]) and, by
+    construction (every type in it was found in the text -- see
+    `dataset_code.format_sfner_sft`), never contains a negative entity type
+    (one with an empty span list). Extraction quality therefore has a single,
+    undivided component -- there is nothing to split by positive/negative.
+
+    Returns a dict with three additive components (their sum equals the
+    original monolithic reward, including all early-exit gating):
+        - "format": 1.0 if the output is valid Dict[str -> List[str]], else 0.0
+        - "key_matching": partial credit for correct entity-type keys
+        - "extraction_quality": bonus + extraction score (Q_R) over every
+          entity type; clipped
+    """
+    fmt, key_matching, gated, gt, out_dict, ent_types = _compute_structured_common(gt_json, pred_json)
+    components = {
+        "format": fmt,
+        "key_matching": key_matching,
+        "extraction_quality": 0.0,
+    }
+    if not gated:
+        return components
+
+    n_types = len(ent_types)
+
+    # Level 3: extraction quality over every entity type (all positive by
+    # construction for sfner -- see docstring).
+    Q_R = 0.0
+    for t in ent_types:
+        Q_R += _compute_extraction_score(gt[t], out_dict[t]) / n_types  # out_dict[t] safe: exact key match enforced above
+
+    # Clip to prevent quality penalty from erasing the format reward: correct
+    # format should always beat wrong format (R=0).
+    components["extraction_quality"] = bonus + Q_R if bonus + Q_R >= 0 else 0.0
+
+    return components
+
+NER_REWARD_COMPONENTS = (
     "format",
     "key_matching",
     "extraction_quality_positive",
@@ -542,53 +475,93 @@ REWARD_COMPONENTS = (
     "soft_f1",
 )
 
-def compute_sample_rewards(gt_json, pred_json, bonus=STRUCTURED_REWARD_BONUS):
-    """Compute every reward signal used across GRPO reward functions for one sample.
+SFNER_REWARD_COMPONENTS = (
+    "format",
+    "key_matching",
+    "extraction_quality",
+    "structured_total",
+    "soft_f1",
+)
+
+def compute_ner_sample_rewards(gt_json, pred_json, bonus=STRUCTURED_REWARD_BONUS):
+    """Compute every reward signal used across NER GRPO reward functions for one sample.
 
     Returns the four structured-reward components, their sum ("structured_total",
-    i.e. what `structured_*_reward_fn`'s summed outputs give a sample), and the
-    soft-F1 reward ("soft_f1") used by `soft_f1_reward_fn`.
+    i.e. what `ner_structured_*_reward_fn`'s summed outputs give a sample), and
+    the soft-F1 reward ("soft_f1") used by `soft_f1_reward_fn`.
     """
-    components = compute_structured_reward_components(gt_json, pred_json, bonus)
+    components = compute_ner_structured_reward_components(gt_json, pred_json, bonus)
     rewards = dict(components)
     rewards["structured_total"] = sum(components.values())
     rewards["soft_f1"] = compute_sample_f1(gt_json, pred_json, mode="soft")
     return rewards
 
-def _structured_component_reward_fn(component):
+def compute_sfner_sample_rewards(gt_json, pred_json, bonus=STRUCTURED_REWARD_BONUS):
+    """Compute every reward signal used across schema-free NER GRPO reward functions for one sample.
+
+    Returns the three structured-reward components, their sum ("structured_total",
+    i.e. what `sfner_structured_*_reward_fn`'s summed outputs give a sample), and
+    the soft-F1 reward ("soft_f1") used by `soft_f1_reward_fn`.
+    """
+    components = compute_sfner_structured_reward_components(gt_json, pred_json, bonus)
+    rewards = dict(components)
+    rewards["structured_total"] = sum(components.values())
+    rewards["soft_f1"] = compute_sample_f1(gt_json, pred_json, mode="soft")
+    return rewards
+
+def _structured_component_reward_fn(component, compute_fn):
     def reward_fn(prompts, completions, answer, **kwargs):
         return [
-            compute_structured_reward_components(
+            compute_fn(
                 gt_json,
                 clean_prediction(completion[0]["content"])
             )[component]
             for completion, gt_json in zip(completions, answer)
         ]
+    # Un-prefixed __name__ so TRL/wandb logs a stable `structured_<level>_reward_fn`
+    # key regardless of task -- ner and sfner runs are still comparable there, even
+    # though sfner only ever populates a subset of the possible component names.
     reward_fn.__name__ = f"structured_{component}_reward_fn"
     return reward_fn
 
 # Split into one reward function per pseudocode level so TRL logs each
 # component's mean/std to wandb separately (rewards/structured_<level>_reward_fn/*),
-# while their sum (equal weights) reproduces the original combined reward exactly.
-structured_format_reward_fn = _structured_component_reward_fn("format")
-structured_key_matching_reward_fn = _structured_component_reward_fn("key_matching")
-structured_extraction_quality_positive_reward_fn = _structured_component_reward_fn("extraction_quality_positive")
-structured_extraction_quality_negative_reward_fn = _structured_component_reward_fn("extraction_quality_negative")
+# while their sum (equal weights) reproduces the corresponding combined reward
+# exactly. NER keeps the positive/negative quality split; sfner has a single,
+# undivided quality component (its GT never contains a negative entity type).
+ner_structured_format_reward_fn = _structured_component_reward_fn("format", compute_ner_structured_reward_components)
+ner_structured_key_matching_reward_fn = _structured_component_reward_fn("key_matching", compute_ner_structured_reward_components)
+ner_structured_extraction_quality_positive_reward_fn = _structured_component_reward_fn("extraction_quality_positive", compute_ner_structured_reward_components)
+ner_structured_extraction_quality_negative_reward_fn = _structured_component_reward_fn("extraction_quality_negative", compute_ner_structured_reward_components)
+
+sfner_structured_format_reward_fn = _structured_component_reward_fn("format", compute_sfner_structured_reward_components)
+sfner_structured_key_matching_reward_fn = _structured_component_reward_fn("key_matching", compute_sfner_structured_reward_components)
+sfner_structured_extraction_quality_reward_fn = _structured_component_reward_fn("extraction_quality", compute_sfner_structured_reward_components)
 
 
 # --- REWARD SELECTION ---
 # Each entry is a list of reward functions passed to GRPOTrainer together
 # (with equal weights), so TRL logs a wandb rewards/<name>/mean-std pair per
-# entry while their sum still gives the combined training reward. Shared by
-# both the NER and labelling tasks -- neither the reward computation nor this
-# registry has any task-specific logic in it.
+# entry while their sum still gives the combined training reward. Split by
+# task (NER_REWARD_FUNCTIONS / SFNER_REWARD_FUNCTIONS) purely because the
+# "structured" entry's components differ; both registries expose the same
+# choice keys ("structured", "soft_f1").
 
-REWARD_FUNCTIONS = {
+NER_REWARD_FUNCTIONS = {
     "structured": [
-        structured_format_reward_fn,
-        structured_key_matching_reward_fn,
-        structured_extraction_quality_positive_reward_fn,
-        structured_extraction_quality_negative_reward_fn,
+        ner_structured_format_reward_fn,
+        ner_structured_key_matching_reward_fn,
+        ner_structured_extraction_quality_positive_reward_fn,
+        ner_structured_extraction_quality_negative_reward_fn,
+    ],
+    "soft_f1": [soft_f1_reward_fn],
+}
+
+SFNER_REWARD_FUNCTIONS = {
+    "structured": [
+        sfner_structured_format_reward_fn,
+        sfner_structured_key_matching_reward_fn,
+        sfner_structured_extraction_quality_reward_fn,
     ],
     "soft_f1": [soft_f1_reward_fn],
 }
