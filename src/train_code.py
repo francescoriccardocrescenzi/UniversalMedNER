@@ -1,10 +1,12 @@
-# --- IMPORTS ---
+"""Training code for both NER and SF-NER.
+
+Relies on peft and trl for the actual implementations.
+"""
 
 import peft
 import trl
 
-# Possible LoRA target modules. Task-agnostic (a model-architecture choice, not a
-# task-specific one) -- shared by both training pipelines.
+# Possible LoRA target modules.
 TARGET_MODULES = {
     "attention_only": [
         "q_proj", "k_proj", "v_proj", "o_proj"
@@ -15,13 +17,13 @@ TARGET_MODULES = {
     ]
 }
 
-# MODEL FINE TUNE CODE
 
 def collate_fn(samples, processor):
     """Preprocess and collate batch of samples.
 
     This function is responsible for applying chat templates, tokenizing the prompts,
-    and constructing the labels.
+    and constructing the labels. (NB: This function is not responsible for defining the prompts,
+    those are defined by the data pipeline. Hence, collate_fn is task agnostic.)
     """
     # Compute text (per sample)
     texts = []
@@ -71,11 +73,8 @@ def execute_sft(
     eval_steps=200,
     max_steps=-1,
 ):
-    """Set up and execut supervised fine tuning on the MedGemma.
+    """Set up and execut supervised fine tuning on the MedGemma."""
 
-    max_train_samples/max_validation_samples: -1 means "no limit". Task-agnostic
-    (SFT training has no task-specific logic) -- used identically by every task.
-    """
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples != -1 else ds["train"]
     eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples != -1 else ds["validation"]
@@ -91,23 +90,19 @@ def execute_sft(
     sft_config = trl.SFTConfig(
         output_dir=str(save_folder),
 
-        # --- HUGGING FACE ---
         push_to_hub=False,
 
-        # --- CHECKPOINTING ---
         save_strategy="steps",
         save_steps=save_steps,
         save_total_limit=2,
         max_steps=max_steps,
 
-        # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
         eval_steps=eval_steps,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
 
-        # --- TRAINING ---
         num_train_epochs=num_epochs,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
@@ -164,14 +159,8 @@ def execute_grpo(
     eval_steps=50,
     max_steps=-1,
 ):
-    """max_train_samples/max_validation_samples: -1 means "no limit".
+    """Set up and execut GRPO on the MedGemma."""
 
-    Task-agnostic: `reward_funcs` is a list of already-resolved reward
-    functions (e.g. `eval_code.NER_REWARD_FUNCTIONS[reward_fn]` or
-    `eval_code.SFNER_REWARD_FUNCTIONS[reward_fn]`) passed in by the caller, so
-    this function itself doesn't need to know which task -- or which task's
-    reward registry -- it's being used for.
-    """
     # Prepare datasets
     train_dataset = ds["train"].select(range(max_train_samples)) if max_train_samples != -1 else ds["train"]
     eval_dataset = ds["validation"].select(range(max_validation_samples)) if max_validation_samples != -1 else ds["validation"]
@@ -183,27 +172,15 @@ def execute_grpo(
         target_modules=target_modules,
         task_type="CAUSAL_LM",
     )
-
-    # Stop generation on either the tokenizer's EOS or the chat template's end-of-turn
-    # marker, derived from the processor rather than hardcoded, so this stays correct
-    # if the model/tokenizer changes.
-    eos_token_id = [
-        processor.tokenizer.eos_token_id,
-        processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
-    ]
-
     grpo_config = trl.GRPOConfig(
         output_dir=str(save_folder),
 
-        # --- HUGGING FACE ---
         push_to_hub=False,
 
-        # --- CHECKPOINTING ---
         save_strategy="best",
         save_total_limit=2,
         max_steps=max_steps,
 
-        # --- EVAL / BEST MODEL ---
         eval_strategy="steps",
         eval_steps=eval_steps,
         per_device_eval_batch_size=batch_size,
@@ -212,7 +189,6 @@ def execute_grpo(
         metric_for_best_model="eval_reward",
         greater_is_better=True,
 
-        # --- TRAINING ---
         num_train_epochs=num_epochs,
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
@@ -224,7 +200,7 @@ def execute_grpo(
         bf16=True,
 
         gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing_kwargs={"use_reentrant": False},# 
         report_to="wandb",
 
         log_completions=True,
@@ -232,11 +208,13 @@ def execute_grpo(
 
         beta=beta,
         temperature=temperature,
-        generation_kwargs={"eos_token_id": eos_token_id},
+        generation_kwargs={"eos_token_id": [
+            processor.tokenizer.eos_token_id,
+            processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
+        ]},
     )
 
-    # log_completions=True still writes parquet files and wandb tables, which is what we
-    # actually want; this just silences the rich console table TRL prints alongside it.
+    # Avoid spamming the completions on the console
     trl.trainer.grpo_trainer.print_prompt_completions_sample = lambda *args, **kwargs: None
 
     # Initialize trainer
@@ -252,8 +230,8 @@ def execute_grpo(
     print("per_device_train_batch_size =", grpo_trainer.args.per_device_train_batch_size)
     print("gradient_accumulation_steps =", grpo_trainer.args.gradient_accumulation_steps)
     print("num_generations =", grpo_trainer.args.num_generations)
-
     print("train dataloader batch size =", grpo_trainer.get_train_dataloader().batch_size)
+    
     # Train
     grpo_trainer.train()
     return grpo_trainer

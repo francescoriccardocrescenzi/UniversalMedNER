@@ -1,4 +1,4 @@
-"""Training pipeline for NER (directed extraction)."""
+"""Training pipeline for NER."""
 
 import argparse
 from pathlib import Path
