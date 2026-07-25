@@ -188,6 +188,7 @@ if run_step 1; then
   echo "[STEP 1] TEST BASELINE MODEL"
   python src/test_sfner_pipeline.py \
     --metrics_path "$RUN_FOLDER/baseline_metrics.json" \
+    --completions_path "$RUN_FOLDER/baseline_completions.parquet" \
     --model_repo "$MODEL_REPO" \
     --mode baseline \
     --verbose \
@@ -242,6 +243,7 @@ if run_step 3; then
   echo "[STEP 3] TEST SFT MODEL"
   python src/test_sfner_pipeline.py \
     --metrics_path "$RUN_FOLDER/sft_metrics.json" \
+    --completions_path "$RUN_FOLDER/sft_completions.parquet" \
     --model_repo "$MODEL_REPO" \
     --mode sft \
     --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \
@@ -298,6 +300,7 @@ if run_step 5; then
   echo "[STEP 5] TEST GRPO MODEL"
   python src/test_sfner_pipeline.py \
     --metrics_path "$RUN_FOLDER/grpo_metrics.json" \
+    --completions_path "$RUN_FOLDER/grpo_completions.parquet" \
     --model_repo "$MODEL_REPO" \
     --mode grpo \
     --sft_checkpoint_folder "$CHECKPOINT_FOLDER_SFT" \

@@ -1,36 +1,23 @@
 """Model inference code.
 
-This module runs generation against a MedGemma model and returns raw,
-already-cleaned completions -- it does not compute any metrics or rewards.
-Scoring those completions (F1, GRPO reward diagnostics) is `eval_code.py`'s
-job, via `eval_code.score_completions`, which is the scoring counterpart to
-this module's `generate_completions`. Fully task-agnostic: nothing here knows
-about NER vs. schema-free NER, only about the shared chat-message / JSON-string
-sample format both tasks produce.
+This module runs inference for MedGemma model and returns cleaned completions.
+It does not score those completions. It handles both NER and SFNER.
 """
-
-# --- IMPORTS ---
 
 from tqdm import tqdm
 import torch
-
 from eval_code import clean_prediction
 
-
-# --- INFERENCE ---
 
 def run_batched_inference(model, processor, prompts, max_new_tokens=200, temperature=None, top_p=None):
     """Run model inference on a batch of samples.
 
-    By default generation is greedy (`do_sample=False`), matching prior
-    behavior. Passing `temperature` and/or `top_p` switches to sampling with
+    By default generation is greedy but passing `temperature` and/or `top_p` switches to sampling with
     those parameters.
 
-    Returns a (responses, truncated) pair: `responses` are the cleaned model
-    outputs and `truncated` is a parallel list of booleans flagging samples
-    whose generation hit `max_new_tokens` without emitting an end-of-sequence
-    token, i.e. the same "clipped" condition GRPOTrainer tracks (its
-    `is_truncated = ids[-1] not in eos_and_pad`) for `completions/clipped_ratio`.
+    Returns a (responses, truncated) pair: responses are the cleaned model
+    outputs and truncated is a list of booleans flagging samples
+    whose generation hit max_new_tokens.
     """
 
     # Apply chat template per sample
@@ -52,20 +39,15 @@ def run_batched_inference(model, processor, prompts, max_new_tokens=200, tempera
     ).to(model.device)
     prompt_len = inputs["input_ids"].shape[1]
 
-    # Stop generation on either the tokenizer's EOS or the chat template's end-of-turn
-    # marker. Don't rely solely on model.generation_config: it can silently end up
-    # missing one of these (e.g. after merging a LoRA adapter), causing generation to
-    # run all the way to max_new_tokens instead of stopping at the turn boundary.
-    eos_token_id = [
-        processor.tokenizer.eos_token_id,
-        processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
-    ]
-
+    # Set up generation
     do_sample = temperature is not None or top_p is not None
     generate_kwargs = dict(
         max_new_tokens=max_new_tokens,
         do_sample=do_sample,
-        eos_token_id=eos_token_id,
+        eos_token_id=[
+            processor.tokenizer.eos_token_id,
+            processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
+        ],
     )
     if do_sample:
         if temperature is not None:
@@ -73,6 +55,7 @@ def run_batched_inference(model, processor, prompts, max_new_tokens=200, tempera
         if top_p is not None:
             generate_kwargs["top_p"] = top_p
 
+    # Batch generate
     with torch.inference_mode():
         outputs = model.generate(**inputs, **generate_kwargs)
 
@@ -82,22 +65,19 @@ def run_batched_inference(model, processor, prompts, max_new_tokens=200, tempera
         skip_special_tokens=False
     )
 
-    responses = []
-
     # Cleanup generated text
+    responses = []
     for text in decoded:
         responses.append(clean_prediction(text))
 
-    # A generation that stopped naturally has its unfinished rows padded with
-    # pad_token_id after the EOS token, so the last generated token is EOS/pad
-    # unless the row ran out of budget before ever stopping.
+    # Determine which samples were truncated
     eos_and_pad = set(eos_token_id) | {processor.tokenizer.pad_token_id}
     truncated = [
         row[-1].item() not in eos_and_pad
         for row in outputs[:, prompt_len:]
     ]
 
-    # cleanup
+    # Cleanup memory
     del inputs
     del outputs
     torch.cuda.empty_cache()
@@ -129,34 +109,10 @@ def test_model_on_batch(model, processor, pile_ds, split="train", indices=None, 
         print(f"RESPONSE:\n{r}")
         print(f"TRUNCATED: {t}")
 
-def generate_completions(
-    model,
-    processor,
-    ds,
-    split="test",
-    batch_size=8,
-    max_samples=-1,
-    max_new_tokens=200,
-    temperature=None,
-    top_p=None,
-):
+def generate_completions(model, processor, ds, split="test", batch_size=8, max_samples=-1, max_new_tokens=200, temperature=None, top_p=None):
     """Run inference over a dataset split and return one record per sample.
 
-    Each record is `{"index", "prompt", "completion", "ground_truth", "truncated"}`:
-    `prompt` is the raw (unrendered) chat-message list fed to the model,
-    `completion` is the cleaned model output, `ground_truth` is the target
-    JSON string from the sample's last (assistant) message, and `truncated`
-    mirrors `run_batched_inference`'s clipped-generation flag. No metric or
-    reward computation happens here -- pass the returned list to
-    `eval_code.score_completions` for that.
-
-    You may specify a split, a batch size, and an optional maximum number of
-    samples (`max_samples`; -1 means "no limit"). `max_new_tokens` caps
-    generation length exactly like `max_completion_length` does during GRPO
-    training (pass the same value used there so truncation behaves identically
-    at test time). `temperature`/`top_p` are forwarded to `run_batched_inference`:
-    leaving both as `None` keeps generation greedy (the default), passing
-    either switches to sampling with that parameter.
+    Each record is in the form {"index", "prompt", "completion", "ground_truth", "truncated"}
     """
     # Prepare model for inference
     if model.is_gradient_checkpointing:

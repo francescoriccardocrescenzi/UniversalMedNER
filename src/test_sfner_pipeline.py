@@ -25,17 +25,15 @@ def parse_args():
     parser.add_argument("--verbose", action="store_true", default=False)
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--top_p", type=float, default=None)
-    parser.add_argument("--completions_path", type=Path, default=None)
+    parser.add_argument("--completions_path", type=Path, default=Path("completions.parquet"))
 
     parser.add_argument("--mode", type=str, choices=["baseline", "sft", "grpo"], default="baseline")
 
-    # Shared hyperparameters
     parser.add_argument("--dataset_repo", type=str, default="disi-unibo-nlp/Pile-NER-biomed-IOB")
     parser.add_argument("--random_seed", type=int, required=True)
     parser.add_argument("--validation_size", type=float, required=True)
     parser.add_argument("--test_size", type=float, required=True)
     parser.add_argument("--max_raw_samples", type=int, default=-1)
-    parser.add_argument("--f1_mode", type=str, choices=["soft", "strict", "both"], default="both")
     parser.add_argument("--skip_reward_metrics", action="store_true", default=False)
 
     parser.add_argument("--test_batch_size", type=int, default=16)
@@ -55,12 +53,11 @@ if __name__ == "__main__":
     np.random.seed(args.random_seed)
 
     # Generation must be capped at the same length used during GRPO training so
-    # test-time truncation behavior (and the resulting reward/F1 numbers) matches
-    # what the model was actually optimized against, regardless of --mode.
+    # test-time truncation behavior matches what the model was actually optimized against
     max_completion_length = args.grpo_max_completion_length
     print('[OK] Using max_completion_length:', max_completion_length)
 
-    completions_path = args.completions_path or (args.metrics_path.parent / "completions.parquet")
+    completions_path = args.completions_path
 
     print('[INFO] Preparing dataset...')
     detok = sacremoses.MosesDetokenizer(lang="en")
@@ -101,8 +98,6 @@ if __name__ == "__main__":
         )
         print('[OK] Tested model on single batch')
 
-    f1_modes = ("soft", "strict") if args.f1_mode == "both" else (args.f1_mode,)
-
     print('[INFO] Running inference on test set...')
     records = ic.generate_completions(
         model,
@@ -121,7 +116,7 @@ if __name__ == "__main__":
     metric_dict = evc.score_completions(
         records,
         task="sfner",
-        modes=f1_modes,
+        modes=("soft", "strict"),
         compute_rewards=not args.skip_reward_metrics,
         completions_path=completions_path,
         temperature=args.temperature,
