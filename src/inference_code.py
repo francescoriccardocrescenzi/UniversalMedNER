@@ -39,15 +39,17 @@ def run_batched_inference(model, processor, prompts, max_new_tokens=200, tempera
     ).to(model.device)
     prompt_len = inputs["input_ids"].shape[1]
 
+    eos_token_id = [
+        processor.tokenizer.eos_token_id,
+        processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
+    ]
+
     # Set up generation
     do_sample = temperature is not None or top_p is not None
     generate_kwargs = dict(
         max_new_tokens=max_new_tokens,
         do_sample=do_sample,
-        eos_token_id=[
-            processor.tokenizer.eos_token_id,
-            processor.tokenizer.convert_tokens_to_ids("<end_of_turn>"),
-        ],
+        eos_token_id=eos_token_id,
     )
     if do_sample:
         if temperature is not None:
