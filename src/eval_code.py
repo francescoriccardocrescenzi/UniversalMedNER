@@ -122,9 +122,9 @@ def compute_sample_f1(gt_json, pred_json, mode="soft"):
 # pass through the inference logic
 def clean_prediction(s):
     """Strip markdown code fences and turn tokesn from a model prediction."""
-    s = s.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     s = s.split("<start_of_turn>model\n", 1)[-1]
     s = s.split("<end_of_turn>", 1)[0]
+    s = s.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return s
 
 def score_completions(records, task, modes=F1_MODES, compute_rewards=True, completions_path=None, temperature=None, top_p=None):
