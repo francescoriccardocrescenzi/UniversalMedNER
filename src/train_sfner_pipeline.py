@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument("--target_modules", type=str, choices=["attention_only", "all_linear"], required=True)
     parser.add_argument("--max_raw_samples", type=int, default=-1)
 
-    parser.add_argument("--reward_fn", type=str, choices=list(ec.SFNER_REWARD_FUNCTIONS.keys()), default="structured")
+    parser.add_argument("--grpo_reward_fn", type=str, choices=list(ec.SFNER_REWARD_FUNCTIONS.keys()), default="structured")
 
     parser.add_argument("--sft_learning_rate", type=float, default=2e-4)
     parser.add_argument("--sft_lora_rank", type=int, default=16)
@@ -137,7 +137,7 @@ if __name__ == "__main__":
             num_epochs=args.grpo_num_epochs,
             beta=args.grpo_beta,
             temperature=args.grpo_temperature,
-            reward_funcs=ec.SFNER_REWARD_FUNCTIONS[args.reward_fn],
+            reward_funcs=ec.SFNER_REWARD_FUNCTIONS[args.grpo_reward_fn],
             eval_steps=args.grpo_eval_steps,
             max_steps=args.grpo_max_steps,
         )

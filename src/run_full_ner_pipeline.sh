@@ -46,7 +46,7 @@ NER_GRPO_BETA=0.0
 NER_GRPO_TEMPERATURE=1.0
 NER_GRPO_EVAL_STEPS=50
 NER_GRPO_MAX_STEPS=-1
-NER_REWARD_FN=structured
+NER_GRPO_REWARD_FN=structured
 
 NER_TEST_BATCH_SIZE=16
 NER_MAX_TEST_SAMPLES=-1
@@ -94,7 +94,7 @@ for arg in "$@"; do
     --ner_grpo_temperature=*) NER_GRPO_TEMPERATURE="${arg#*=}" ;;
     --ner_grpo_eval_steps=*) NER_GRPO_EVAL_STEPS="${arg#*=}" ;;
     --ner_grpo_max_steps=*) NER_GRPO_MAX_STEPS="${arg#*=}" ;;
-    --ner_reward_fn=*) NER_REWARD_FN="${arg#*=}" ;;
+    --ner_grpo_reward_fn=*) NER_GRPO_REWARD_FN="${arg#*=}" ;;
 
     --ner_test_batch_size=*) NER_TEST_BATCH_SIZE="${arg#*=}" ;;
     --ner_max_test_samples=*) NER_MAX_TEST_SAMPLES="${arg#*=}" ;;
@@ -157,7 +157,7 @@ if [[ "$PROFILE" == "smoke" ]]; then
   NER_GRPO_TEMPERATURE=1.0
   NER_GRPO_EVAL_STEPS=1
   NER_GRPO_MAX_STEPS=2
-  NER_REWARD_FN=structured
+  NER_GRPO_REWARD_FN=structured
 
   NER_TEST_BATCH_SIZE=16
   NER_MAX_TEST_SAMPLES=16
@@ -285,7 +285,7 @@ if run_step 4; then
     --grpo_temperature "$NER_GRPO_TEMPERATURE" \
     --grpo_eval_steps "$NER_GRPO_EVAL_STEPS" \
     --grpo_max_steps "$NER_GRPO_MAX_STEPS" \
-    --reward_fn "$NER_REWARD_FN" \
+    --grpo_reward_fn "$NER_GRPO_REWARD_FN" \
     --max_negatives "$NER_MAX_NEGATIVES" \
     --max_raw_samples "$MAX_RAW_SAMPLES" \
     --grpo_max_train_samples "$NER_GRPO_MAX_TRAIN_SAMPLES" \

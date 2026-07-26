@@ -43,7 +43,7 @@ SFNER_GRPO_BETA=0.0
 SFNER_GRPO_TEMPERATURE=1.0
 SFNER_GRPO_EVAL_STEPS=50
 SFNER_GRPO_MAX_STEPS=-1
-SFNER_REWARD_FN=structured
+SFNER_GRPO_REWARD_FN=structured
 
 SFNER_TEST_BATCH_SIZE=16
 SFNER_MAX_TEST_SAMPLES=-1
@@ -88,7 +88,7 @@ for arg in "$@"; do
     --sfner_grpo_temperature=*) SFNER_GRPO_TEMPERATURE="${arg#*=}" ;;
     --sfner_grpo_eval_steps=*) SFNER_GRPO_EVAL_STEPS="${arg#*=}" ;;
     --sfner_grpo_max_steps=*) SFNER_GRPO_MAX_STEPS="${arg#*=}" ;;
-    --sfner_reward_fn=*) SFNER_REWARD_FN="${arg#*=}" ;;
+    --sfner_grpo_reward_fn=*) SFNER_GRPO_REWARD_FN="${arg#*=}" ;;
 
     --sfner_test_batch_size=*) SFNER_TEST_BATCH_SIZE="${arg#*=}" ;;
     --sfner_max_test_samples=*) SFNER_MAX_TEST_SAMPLES="${arg#*=}" ;;
@@ -148,7 +148,7 @@ if [[ "$PROFILE" == "smoke" ]]; then
   SFNER_GRPO_TEMPERATURE=1.0
   SFNER_GRPO_EVAL_STEPS=1
   SFNER_GRPO_MAX_STEPS=2
-  SFNER_REWARD_FN=structured
+  SFNER_GRPO_REWARD_FN=structured
 
   SFNER_TEST_BATCH_SIZE=16
   SFNER_MAX_TEST_SAMPLES=16
@@ -271,7 +271,7 @@ if run_step 4; then
     --grpo_temperature "$SFNER_GRPO_TEMPERATURE" \
     --grpo_eval_steps "$SFNER_GRPO_EVAL_STEPS" \
     --grpo_max_steps "$SFNER_GRPO_MAX_STEPS" \
-    --reward_fn "$SFNER_REWARD_FN" \
+    --grpo_reward_fn "$SFNER_GRPO_REWARD_FN" \
     --max_raw_samples "$MAX_RAW_SAMPLES" \
     --grpo_max_train_samples "$SFNER_GRPO_MAX_TRAIN_SAMPLES" \
     --grpo_max_validation_samples "$SFNER_GRPO_MAX_VALIDATION_SAMPLES"
