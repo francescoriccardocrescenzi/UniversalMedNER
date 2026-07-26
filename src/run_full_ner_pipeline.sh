@@ -106,10 +106,6 @@ for arg in "$@"; do
   esac
 done
 
-if [[ -z "$LABEL" ]]; then
-  echo "Usage: $0 --label=RUN_LABEL [-1] [-2] [-3] [-4] [-5] [--profile=standard|smoke] [--random_seed=42] [--ner_sft_learning_rate=2e-4] [--ner_grpo_beta=0.0] ..."
-  exit 1
-fi
 
 # ---------- Smoke-test profile ----------
 

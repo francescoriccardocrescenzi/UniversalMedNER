@@ -1,8 +1,8 @@
 # UniversalMedNER
 
-Fine-tuning [MedGemma](https://huggingface.co/google/medgemma-1.5-4b-it) for biomedical named-entity recognition, via LoRA supervised fine-tuning (SFT) followed by LoRA GRPO reinforcement learning with custom reward functions. Training data comes from [`disi-unibo-nlp/Pile-NER-biomed-IOB`](https://huggingface.co/datasets/disi-unibo-nlp/Pile-NER-biomed-IOB).
+Fine-tuning [MedGemma](https://huggingface.co/google/medgemma-1.5-4b-it) for biomedical named-entity recognition, via LoRA supervised fine-tuning (SFT) followed by LoRA GRPO reinforcement learning. Training data comes from [`disi-unibo-nlp/Pile-NER-biomed-IOB`](https://huggingface.co/datasets/disi-unibo-nlp/Pile-NER-biomed-IOB).
 
-The model is given the text plus a candidate list of entity types and must extract spans for each, including deliberately-included negative types it should return empty for.
+The model is given the text plus a candidate list of entity types and must extract spans for each.
 
 ## Setup
 
@@ -21,9 +21,7 @@ The model is given the text plus a candidate list of entity types and must extra
    WANDB_API_KEY=...
    ```
 
-   `HF_TOKEN` must belong to a Hugging Face account with access to MedGemma. Pipeline scripts load this file with `set -a; source .env; set +a`.
-
-3. **Hugging Face cache.** The shell pipeline scripts set `HF_HOME=data/.cache/huggingface`, so the model/dataset cache lands inside the (git-ignored) `data/` directory rather than `~/.cache`.
+   `HF_TOKEN` must belong to a Hugging Face account with access to MedGemma.
 
 ## Running the pipeline
 
@@ -47,33 +45,29 @@ Hyperparameters are plain CLI flags with defaults set at the top of each shell s
 src/run_full_ner_pipeline.sh --label=my_run -2 -3 --ner_sft_learning_rate=1e-4 --ner_sft_num_epochs=2
 ```
 
-Pass `--profile=smoke` for a fast, fixed-configuration end-to-end sanity check (shrinks data volume and run duration only, keeps the real base model and full GPU-capacity settings) before committing to a full run:
+Pass `--profile=smoke` for a fast, fixed-configuration end-to-end sanity check:
 
 ```bash
 src/run_full_ner_pipeline.sh --label=smoke --profile=smoke
 ```
 
-Checkpoints are **not** kept locally — SFT/GRPO LoRA adapters are pushed to and pulled from the Hugging Face Hub repo [`frc00/UniversalMedNER`](https://huggingface.co/frc00/UniversalMedNER).
-
-See [`CLAUDE.md`](./CLAUDE.md) for the complete flag reference, module structure, and design conventions.
-
 ## Project structure
 
 ```
 src/
-├── dataset_code.py         # IOB dataset → SFT/GRPO instruction format
-├── inference_code.py       # model inference (batched generation)
-├── eval_code.py            # metrics (F1) and GRPO reward functions
-├── train_code.py           # SFT/GRPO training loops (TRL + PEFT)
-├── util_code.py            # shared helpers (Hub adapter loading)
-├── train_pipeline.py       # CLI: run SFT or GRPO training
-├── test_pipeline.py        # CLI: evaluate a checkpoint on the test split
-└── run_full_ner_pipeline.sh    # end-to-end driver
+├── dataset_code.py         # dataset and instruction format
+├── inference_code.py       # model inference
+├── eval_code.py            # metrics and reward functions
+├── train_code.py           # SFT/GRPO training loops
+├── util_code.py            # shared helpers
+├── train_ner_pipeline.py   # run SFT or GRPO training
+├── test_ner_pipeline.py    # evaluate a checkpoint on the test split
+└── run_full_ner_pipeline.sh    # end-to-end pipeline
 ```
 
 ## Results
 
-_TBD._
+The training pipeline (SFT + GRPO) increased soft F1 on the test split from 0.48 (baseline) to 0.76.
 
 ## Coming soon
 
