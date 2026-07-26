@@ -43,6 +43,7 @@ SFNER_GRPO_BETA=0.0
 SFNER_GRPO_TEMPERATURE=1.0
 SFNER_GRPO_EVAL_STEPS=50
 SFNER_GRPO_MAX_STEPS=-1
+SFNER_REWARD_FN=structured
 
 SFNER_TEST_BATCH_SIZE=16
 SFNER_MAX_TEST_SAMPLES=-1
@@ -87,6 +88,7 @@ for arg in "$@"; do
     --sfner_grpo_temperature=*) SFNER_GRPO_TEMPERATURE="${arg#*=}" ;;
     --sfner_grpo_eval_steps=*) SFNER_GRPO_EVAL_STEPS="${arg#*=}" ;;
     --sfner_grpo_max_steps=*) SFNER_GRPO_MAX_STEPS="${arg#*=}" ;;
+    --sfner_reward_fn=*) SFNER_REWARD_FN="${arg#*=}" ;;
 
     --sfner_test_batch_size=*) SFNER_TEST_BATCH_SIZE="${arg#*=}" ;;
     --sfner_max_test_samples=*) SFNER_MAX_TEST_SAMPLES="${arg#*=}" ;;
@@ -146,6 +148,7 @@ if [[ "$PROFILE" == "smoke" ]]; then
   SFNER_GRPO_TEMPERATURE=1.0
   SFNER_GRPO_EVAL_STEPS=1
   SFNER_GRPO_MAX_STEPS=2
+  SFNER_REWARD_FN=structured
 
   SFNER_TEST_BATCH_SIZE=16
   SFNER_MAX_TEST_SAMPLES=16
@@ -221,22 +224,9 @@ if run_step 2; then
     --sft_save_steps "$SFNER_SFT_SAVE_STEPS" \
     --sft_eval_steps "$SFNER_SFT_EVAL_STEPS" \
     --sft_max_steps "$SFNER_SFT_MAX_STEPS" \
-    --grpo_learning_rate "$SFNER_GRPO_LEARNING_RATE" \
-    --grpo_lora_rank "$SFNER_GRPO_LORA_RANK" \
-    --grpo_batch_size "$SFNER_GRPO_BATCH_SIZE" \
-    --grpo_gradient_accumulation_steps "$SFNER_GRPO_GRADIENT_ACCUMULATION_STEPS" \
-    --grpo_num_generations "$SFNER_GRPO_NUM_GENERATIONS" \
-    --grpo_max_completion_length "$SFNER_GRPO_MAX_COMPLETION_LENGTH" \
-    --grpo_num_epochs "$SFNER_GRPO_NUM_EPOCHS" \
-    --grpo_beta "$SFNER_GRPO_BETA" \
-    --grpo_temperature "$SFNER_GRPO_TEMPERATURE" \
-    --grpo_eval_steps "$SFNER_GRPO_EVAL_STEPS" \
-    --grpo_max_steps "$SFNER_GRPO_MAX_STEPS" \
     --max_raw_samples "$MAX_RAW_SAMPLES" \
     --sft_max_train_samples "$SFNER_SFT_MAX_TRAIN_SAMPLES" \
-    --sft_max_validation_samples "$SFNER_SFT_MAX_VALIDATION_SAMPLES" \
-    --grpo_max_train_samples "$SFNER_GRPO_MAX_TRAIN_SAMPLES" \
-    --grpo_max_validation_samples "$SFNER_GRPO_MAX_VALIDATION_SAMPLES"
+    --sft_max_validation_samples "$SFNER_SFT_MAX_VALIDATION_SAMPLES"
 fi
 
 if run_step 3; then
@@ -270,14 +260,6 @@ if run_step 4; then
     --validation_size "$VALIDATION_SIZE" \
     --test_size "$TEST_SIZE" \
     --target_modules "$TARGET_MODULES" \
-    --sft_learning_rate "$SFNER_SFT_LEARNING_RATE" \
-    --sft_lora_rank "$SFNER_SFT_LORA_RANK" \
-    --sft_batch_size "$SFNER_SFT_BATCH_SIZE" \
-    --sft_gradient_accumulation_steps "$SFNER_SFT_GRADIENT_ACCUMULATION_STEPS" \
-    --sft_num_epochs "$SFNER_SFT_NUM_EPOCHS" \
-    --sft_save_steps "$SFNER_SFT_SAVE_STEPS" \
-    --sft_eval_steps "$SFNER_SFT_EVAL_STEPS" \
-    --sft_max_steps "$SFNER_SFT_MAX_STEPS" \
     --grpo_learning_rate "$SFNER_GRPO_LEARNING_RATE" \
     --grpo_lora_rank "$SFNER_GRPO_LORA_RANK" \
     --grpo_batch_size "$SFNER_GRPO_BATCH_SIZE" \
@@ -289,9 +271,8 @@ if run_step 4; then
     --grpo_temperature "$SFNER_GRPO_TEMPERATURE" \
     --grpo_eval_steps "$SFNER_GRPO_EVAL_STEPS" \
     --grpo_max_steps "$SFNER_GRPO_MAX_STEPS" \
+    --reward_fn "$SFNER_REWARD_FN" \
     --max_raw_samples "$MAX_RAW_SAMPLES" \
-    --sft_max_train_samples "$SFNER_SFT_MAX_TRAIN_SAMPLES" \
-    --sft_max_validation_samples "$SFNER_SFT_MAX_VALIDATION_SAMPLES" \
     --grpo_max_train_samples "$SFNER_GRPO_MAX_TRAIN_SAMPLES" \
     --grpo_max_validation_samples "$SFNER_GRPO_MAX_VALIDATION_SAMPLES"
 fi
