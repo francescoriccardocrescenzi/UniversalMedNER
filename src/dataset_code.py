@@ -1,14 +1,4 @@
-"""Dataset preparation functions.
-
-This module prepares the shared IOB-tagged Pile-NER dataset for both tasks:
-NER (given the text and a candidate list of entity types, extract matching
-spans) and schema-free NER/sfner (given only the text, find and type every entity
-present). Functions with no task-specific logic (dataset splitting, IOB span
-extraction, the SFT->GRPO prompt/answer split) are shared; everything else
-comes in an `_ner_`/`_sfner_` pair.
-"""
-
-# --- IMPORTS ---
+"""Data preprocessing and formatting functions."""
 
 import json
 from collections import Counter, defaultdict
@@ -16,8 +6,6 @@ from tqdm import tqdm
 import numpy as np
 import datasets
 
-
-# --- SHARED DATASET HELPERS ---
 
 def get_split_ds(ds, validation_size, test_size, random_seed):
     """Split dataset into train / validation / test."""
@@ -28,7 +16,7 @@ def get_split_ds(ds, validation_size, test_size, random_seed):
         seed=random_seed
     )
 
-    # Second split: train vs validation (from remaining data)
+    # Second split: train vs validation
     split_2 = split_1['train'].train_test_split(
         test_size=validation_size / (1 - test_size),
         seed=random_seed
@@ -68,10 +56,8 @@ def extract_entity_spans(tokens, tags):
     return entity_spans
 
 def to_grpo_ds(sft_ds):
-    """Split an SFT-formatted dataset's last (assistant) turn into a separate
-    `answer` column, dropping `messages` in favor of `prompt` + `answer`
-    (GRPO needs a prompt to generate from and a target to reward against, not
-    a full target completion)."""
+    """Convert from SFT chat template to GRPO data format."""
+
     return sft_ds.map(
         lambda sample: {
             "prompt": sample["messages"][:-1],
@@ -81,16 +67,7 @@ def to_grpo_ds(sft_ds):
     )
 
 def compute_ner_negative_stats(ds):
-    """Compute per-sample positive/negative entity-label statistics for a
-    formatted NER dataset.
-
-    Works on both SFT-formatted samples ("messages", assistant turn holds the
-    entity json) and GRPO-formatted samples ("answer" holds the entity json).
-    NER-only: the schema-free NER task has no candidate list to probe negatively
-    against, so its ground truth never contains a negative (empty-span) label
-    and this stat would be degenerately 0% there -- callers should skip it for
-    `sfner` rather than compute a meaningless number.
-    """
+    """Compute per-sample positive/negative entity-label statistics for a formatted NER dataset."""
     n_pos_total = 0
     n_neg_total = 0
     n_all_positive = 0
@@ -125,8 +102,6 @@ def compute_ner_negative_stats(ds):
     }
 
 
-# --- NER (directed extraction: candidate entity types are given up front) ---
-
 def get_ner_entity_array_and_weights(ds):
     """Extract all unique entities and their inverse frequencies for negative sampling."""
     entity_list = []
@@ -160,14 +135,8 @@ def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_
 
     Uniformly sample some of the entities present in the current sample
     and use them and the associated spans as positives.
-    Then sample negative entities using inverse frequencies as weights,
-    capped at `max_negatives` (uncapped if `max_negatives` is -1).
-    Create a conversation snippet with:
-        - a system prompt instructing the model to think silently
-        - a user prompt describing the NER task and passing the text and the entities
-        - a model reply containing the json matching entities to their spans found in the text
-    The system prompt and user prompt will act as input while the model reply will be the target
-    for the supervised fine tuning.
+    Then, sample negative entities using inverse frequencies as weights.
+    Format sample using system and user PROMPTS.
     """
     tokens = sample['tokens']
     tags = sample['ner_tags']
@@ -213,7 +182,6 @@ def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_
                     "- Do NOT use semantic matching or external knowledge.\n"
                     "- If no exact match exists for an entity, return an empty list.\n"
                     "- Do NOT hallucinate entities not explicitly present in the text.\n"
-                    "- Matching is case-sensitive and character-exact.\n"
                     "- Output MUST be valid JSON only (no markdown, no explanations)."
                 )
             },
@@ -225,7 +193,7 @@ def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_
                     "Entity labels:\n"
                     f"{shuffled_entities}\n\n"
                     "Return a JSON object where:\n"
-                    "- keys are entity labels\n"
+                    "- keys are UPPERCASE entity labels\n"
                     "- values are lists of exact substrings taken directly from the text\n"
                     "- only exact matches are allowed\n"
                     "- if no match exists for a label, return []"
@@ -241,7 +209,7 @@ def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_
 def create_ner_sft_ds(ds, max_entities, detok, max_negatives=-1):
     """Convert a whole IOB format NER dataset into an SFT format dataset.
 
-    Apply `format_ner_sft` to each sample.
+    Apply format_ner_sft to each sample.
     """
     entity_array, entity_weights = get_ner_entity_array_and_weights(ds)
 
@@ -261,16 +229,8 @@ def create_ner_grpo_ds(ds, max_entities, detok, max_negatives=-1):
     return to_grpo_ds(create_ner_sft_ds(ds, max_entities, detok, max_negatives))
 
 
-# --- Schema-free NER (open-set discovery: no candidate list, model finds+types everything) ---
-
 def format_sfner_sft(sample, detok):
-    """Create SFT sample from IOB sample, for the schema-free NER task.
-
-    Unlike `format_ner_sft`, there is no candidate entity list to sample
-    positives/negatives from: every entity type present in the sample is
-    included in the target as-is, and the model is not shown any labels up
-    front -- it must both find and type every entity itself.
-    """
+    """Create SFT sample from IOB sample, for the schema-free NER task."""
     tokens = sample['tokens']
     tags = sample['ner_tags']
 
@@ -300,10 +260,10 @@ def format_sfner_sft(sample, detok):
                     "Identify all named entities present in the provided input text and extract their exact text spans.\n\n"
                     "Strict rules:\n"
                     "- Only extract substrings that appear verbatim in the text.\n"
-                    "- Do NOT infer, generalize, or paraphrase.\n"
+                    "- Do NOT infer, generalize, or paraphrase entity spans.\n"
                     "- Do NOT use semantic matching or external knowledge.\n"
                     "- Do NOT hallucinate entities not explicitly present in the text.\n"
-                    "- Matching is case-sensitive and character-exact.\n"
+                    "- Group similar entities under the same entity type.\n"
                     "- Choose a concise, descriptive label for each entity type you find.\n"
                     "- Output MUST be valid JSON only (no markdown, no explanations)."
                 )
@@ -314,7 +274,7 @@ def format_sfner_sft(sample, detok):
                     "Text:\n"
                     f"{text}\n\n"
                     "Return a JSON object where:\n"
-                    "- keys are entity type labels you identify\n"
+                    "- keys are UPPERCASE entity type labels you identify\n"
                     "- values are lists of exact substrings taken directly from the text for that entity type\n"
                     "- group all spans of the same entity type under one key\n"
                     "- if no entities are found, return {}"
@@ -328,8 +288,6 @@ def format_sfner_sft(sample, detok):
     }
 
 def create_sfner_sft_ds(ds, detok):
-    """Convert a whole IOB format dataset into an SFT format dataset for the
-    schema-free NER task. Apply `format_sfner_sft` to each sample."""
     return ds.map(
         lambda sample: format_sfner_sft(sample, detok),
         remove_columns=["tokens", "ner_tags"]
