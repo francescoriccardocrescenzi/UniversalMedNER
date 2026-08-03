@@ -53,7 +53,7 @@ def extract_entity_spans(tokens, tags):
     if current_span:
         entity_spans[current_entity].append(" ".join(current_span))
 
-    return entity_spans
+    return {entity: list(dict.fromkeys(spans)) for entity, spans in entity_spans.items()}
 
 def to_grpo_ds(sft_ds):
     """Convert from SFT chat template to GRPO data format."""

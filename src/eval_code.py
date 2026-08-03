@@ -50,13 +50,9 @@ def compute_entity_counts(gt_list, pred_list, mode="soft"):
         return 0, GT_count, PRED_count
 
     if mode == "strict":
-        # No need for Hugarian matching in strict mode: you can just compare the lists directly
-        gt_counts = Counter(frozenset(tokenize(s).items()) for s in gt_list)
-        pred_counts = Counter(frozenset(tokenize(s).items()) for s in pred_list)
-        TP = sum(
-            min(gt_counts[k], pred_counts[k])
-            for k in gt_counts.keys() & pred_counts.keys()
-        )
+        gt_set = {frozenset(tokenize(s).items()) for s in gt_list}
+        pred_set = {frozenset(tokenize(s).items()) for s in pred_list}
+        TP = len(gt_set & pred_set)
         return TP, GT_count, PRED_count
 
     # Compute all pairwise IoU scores to guide matching algorithm
