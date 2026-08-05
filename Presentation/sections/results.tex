@@ -1,0 +1,19 @@
+\begin{frame}{Results}
+  \begin{table}
+    \centering
+    \begin{tabular}{lc}
+      \toprule
+      Model & Soft F1 \\
+      \midrule
+      Baseline (no adapter) & 0.48 \\
+      SFT & -- \\
+      SFT + GRPO & \textbf{0.76} \\
+      \bottomrule
+    \end{tabular}
+  \end{table}
+  \vfill
+  \begin{itemize}
+    \item The full SFT + GRPO pipeline nearly doubles soft F1 over the baseline.
+    \item GRPO reinforcement learning on top of SFT yields a further gain beyond supervised fine-tuning alone.
+  \end{itemize}
+\end{frame}

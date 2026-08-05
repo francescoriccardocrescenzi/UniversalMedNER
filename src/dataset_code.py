@@ -159,7 +159,7 @@ def format_ner_sft(sample, n_entities, entity_array, entity_weights, detok, max_
     sampled_entities = set(positives) | set(negatives)
 
     assistant_output = {
-        entity.upper(): entity_spans[entity]
+        entity.upper(): entity_spans.get(entity, [])
         for entity in sampled_entities
     }
 
