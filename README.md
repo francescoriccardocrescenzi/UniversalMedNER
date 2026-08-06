@@ -54,20 +54,30 @@ src/run_full_ner_pipeline.sh --label=smoke --profile=smoke
 ## Project structure
 
 ```
+README.md                         # this file
+requirements.txt                  # dependencies 
+.env                              # secrets
+data/                             # per-run outputs
+Presentation/                     # slides
 src/
-├── dataset_code.py         # dataset and instruction format
-├── inference_code.py       # model inference
-├── eval_code.py            # metrics and reward functions
-├── train_code.py           # SFT/GRPO training loops
-├── util_code.py            # shared helpers
-├── train_ner_pipeline.py   # run SFT or GRPO training
-├── test_ner_pipeline.py    # evaluate a checkpoint on the test split
-└── run_full_ner_pipeline.sh    # end-to-end pipeline
+├── dataset_code.py               # dataset utils and prompt formatting
+├── inference_code.py             # model inference
+├── eval_code.py                  # metrics and reward functions
+├── train_code.py                 # SFT/GRPO training loops
+├── util_code.py                  # shared helpers
+├── train_ner_pipeline.py         # CLI: SFT/GRPO training for NER
+├── test_ner_pipeline.py          # CLI: NER checkpoint evaluation
+├── train_sfner_pipeline.py       # CLI: SFT/GRPO training SF-NER
+├── test_sfner_pipeline.py        # CLI: SF-NER checkpoint evaluation
+├── run_full_ner_pipeline.sh      # end-to-end NER pipeline
+└── run_full_sfner_pipeline.sh    # end-to-end SF-NER pipeline
 ```
 
 ## Results
 
-The training pipeline (SFT + GRPO) increased soft F1 on the test split from 0.48 (baseline) to 0.76.
+LoRA SFT raised F1 on the test split from 0.41 to 0.71 (f1_strict) and from 0.47 to 0.76 (f1_soft).
+
+Subsequent rounds of LoRA GRPO (we tried with both f1_soft_reward and structured_reward) failed to improve the SFT checkpoint in smoke-test runs, so no full GRPO run was carried out.
 
 ## Coming soon
 
