@@ -85,9 +85,6 @@ Subsequent rounds of LoRA GRPO (we tried with both f1_soft_reward and structured
 
 ## References
 
-- Hu, E. J. et al. [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685). arXiv:2106.09685.
+- Mayhew, S. et al. [Universal NER: A Gold-Standard Multilingual Named Entity Recognition Benchmark](https://arxiv.org/abs/2311.09122). NAACL 2024.
+- Cocchieri, A. et al. [OpenBioNER-v2: A Suite of Lightweight Models for Zero-Shot Medical Named Entity Recognition via Type Descriptions](https://www.sciencedirect.com/science/article/pii/S095741742600638X). Expert Systems with Applications (2026): 131725.
 - Shao, Z. et al. [DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models](https://arxiv.org/abs/2402.03300). arXiv:2402.03300. (Introduces GRPO.)
-- Google. [MedGemma model card](https://huggingface.co/google/medgemma-1.5-4b-it).
-- [`disi-unibo-nlp/Pile-NER-biomed-IOB`](https://huggingface.co/datasets/disi-unibo-nlp/Pile-NER-biomed-IOB) — training dataset.
-- Hugging Face [TRL](https://github.com/huggingface/trl) — SFT/GRPO trainers.
-- Hugging Face [PEFT](https://github.com/huggingface/peft) — LoRA implementation.
